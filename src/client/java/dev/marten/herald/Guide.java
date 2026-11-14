@@ -78,8 +78,25 @@ final class Guide {
 			}
 			ns.add(s);
 		}
+		boolean same = nid.equals(id) && announced;
+		List<String> gone = new ArrayList<>(), added = new ArrayList<>();
+		if (same) {   // 🔄 background update from the engine (his Todoist ticks, game data, chat): say what changed
+			Set<String> newIds = new HashSet<>(); for (Step s : ns) newIds.add(s.id);
+			Set<String> oldIds = new HashSet<>(); for (Step s : steps) oldIds.add(s.id);
+			for (Step s : steps) if (!newIds.contains(s.id) && !doneIds.contains(s.id)) gone.add(s.title);
+			for (Step s : ns) if (!oldIds.contains(s.id)) added.add(s.title);
+		}
+		Step before = current();
 		if (!nid.equals(id)) { id = nid; doneIds.clear(); counts.clear(); presses.clear(); announced = false; finished = false; }
 		steps.clear(); steps.addAll(ns);
+		if (!gone.isEmpty() || !added.isEmpty()) {
+			MutableComponent line = Herald.prefix().append(Component.literal("Plan updated").withStyle(ChatFormatting.AQUA));
+			if (!gone.isEmpty()) line.append(Component.literal("  done: " + String.join(", ", gone.subList(0, Math.min(3, gone.size()))) + (gone.size() > 3 ? " +" + (gone.size() - 3) : "")).withStyle(ChatFormatting.GREEN));
+			if (!added.isEmpty()) line.append(Component.literal("  new: " + String.join(", ", added.subList(0, Math.min(3, added.size()))) + (added.size() > 3 ? " +" + (added.size() - 3) : "")).withStyle(ChatFormatting.YELLOW));
+			Herald.chatLine(line);
+			Step now = current();
+			if (now != null && (before == null || !before.id.equals(now.id))) { h.toast("Next: " + now.title, h.doKey() + ": " + action(now)); h.ping("pling"); }
+		}
 		if (current() != null) finished = false;
 		saveState();
 	}

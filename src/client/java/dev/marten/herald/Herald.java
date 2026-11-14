@@ -296,7 +296,8 @@ public class Herald implements ClientModInitializer {
 			if (n++ >= 2) break;
 			b.append(n == 1 ? "next: " : "  ·  ").append(f.format(new Date(it.at))).append(" ").append(clean(it.title));
 		}
-		return n == 0 ? null : b.toString();
+		if (gen > 0) b.append(n == 0 ? "" : "   ").append("synced ").append(f.format(new Date(gen)));
+		return b.length() == 0 ? null : b.toString();
 	}
 
 	private void run(String tok) {
