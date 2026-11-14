@@ -152,7 +152,7 @@ public class EngineNotify implements ClientModInitializer {
 
 	private static void chatLine(Component c) {
 		Minecraft mc = Minecraft.getInstance();
-		if (mc.hud != null) mc.hud.getChat().addClientSystemMessage(c);   // local only: never sent to the server
+		if (mc.gui != null) mc.gui.hud.getChat().addClientSystemMessage(c);   // local only: never sent to the server
 	}
 
 	/** Minecraft's font has no colour emoji: drop characters outside the Basic Multilingual Plane + joiners. */
