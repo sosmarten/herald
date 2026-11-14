@@ -5,7 +5,7 @@ plugins {
 loom {
 	splitEnvironmentSourceSets()
 	mods {
-		"enginenotify" {
+		"herald" {
 			sourceSet sourceSets.main
 			sourceSet sourceSets.client
 		}

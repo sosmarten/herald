@@ -1,4 +1,4 @@
-package dev.marten.enginenotify;
+package dev.marten.herald;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -41,19 +41,19 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Engine Notify: shows SkyBlock Engine notifications in game.
- * The SkyBlock Engine bridge (PowerShell, every 5 min) writes config/engine-notify/feed.json:
+ * Herald: shows SkyBlock Engine notifications in game.
+ * The SkyBlock Engine bridge (PowerShell, every 5 min) writes config/herald/feed.json:
  *   {"gen": ms, "items": [{"id", "at" (ms), "kind", "title", "text", "url", "sound"}]}
  * Each item is shown once, at its time (toast + chat line + sound), and its id goes to shown.json
  * (the bridge reads that so the desktop popup never repeats it). Client-only: nothing is sent anywhere.
  */
-public class EngineNotify implements ClientModInitializer {
-	public static final Logger LOG = LoggerFactory.getLogger("enginenotify");
+public class Herald implements ClientModInitializer {
+	public static final Logger LOG = LoggerFactory.getLogger("herald");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 	private static final long STALE_MS = 30 * 60_000L;      // older than this when first seen = skipped
 	private static final long KEEP_SHOWN_MS = 3 * 86_400_000L;
 
-	private final Path dir = FabricLoader.getInstance().getConfigDir().resolve("engine-notify");
+	private final Path dir = FabricLoader.getInstance().getConfigDir().resolve("herald");
 	private final Path feedFile = dir.resolve("feed.json");
 	private final Path shownFile = dir.resolve("shown.json");
 	private final Path configFile = dir.resolve("config.json");
@@ -87,7 +87,13 @@ public class EngineNotify implements ClientModInitializer {
 
 	@Override
 	public void onInitializeClient() {
-		try { Files.createDirectories(dir); } catch (Exception e) { LOG.warn("engine-notify dir: {}", e.toString()); }
+		try {
+			Files.createDirectories(dir);
+			Path old = FabricLoader.getInstance().getConfigDir().resolve("engine-notify");   // name before 14.11.2026
+			for (String f : new String[] { "config.json", "shown.json" }) {
+				if (Files.exists(old.resolve(f)) && !Files.exists(dir.resolve(f))) Files.copy(old.resolve(f), dir.resolve(f));
+			}
+		} catch (Exception e) { LOG.warn("herald dir: {}", e.toString()); }
 		loadConfig(true);
 		loadShown();
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
@@ -96,17 +102,17 @@ public class EngineNotify implements ClientModInitializer {
 				mc.getConnection().sendCommand(cmd.substring(1));   // same path as typing it in chat (his click)
 			}
 			if (++tick % 20 != 0) return;                     // once a second
-			try { step(mc); } catch (Exception e) { LOG.warn("engine-notify: {}", e.toString()); }
+			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
 		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
-			ClientCommands.literal("enginenotify")
+			ClientCommands.literal("herald")
 				.then(ClientCommands.literal("test").executes(c -> { test(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("list").executes(c -> { list(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("run").then(ClientCommands.argument("token", StringArgumentType.word())
 					.executes(c -> { run(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
 				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
-		LOG.info("Engine Notify ready: {}", feedFile);
+		LOG.info("Herald ready: {}", feedFile);
 	}
 
 	private void step(Minecraft mc) {
@@ -147,7 +153,7 @@ public class EngineNotify implements ClientModInitializer {
 				String tok = Integer.toString(++tokenSeq, 36);
 				tokens.put(tok, c[1]);
 				line.append(Component.literal("  [" + clean(c[0]) + "]").withStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)
-					.withClickEvent(new ClickEvent.RunCommand("/enginenotify run " + tok))
+					.withClickEvent(new ClickEvent.RunCommand("/herald run " + tok))
 					.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to run " + c[1])))));
 			}
 			if (it.cmds.size() == 1 && cfg.clipboard) {
@@ -173,7 +179,7 @@ public class EngineNotify implements ClientModInitializer {
 
 	private static MutableComponent prefix() {
 		return Component.literal("[").withStyle(ChatFormatting.DARK_GRAY)
-			.append(Component.literal("⚙ Engine").withStyle(ChatFormatting.AQUA))
+			.append(Component.literal("Herald").withStyle(ChatFormatting.AQUA))
 			.append(Component.literal("] ").withStyle(ChatFormatting.DARK_GRAY));
 	}
 
@@ -203,7 +209,7 @@ public class EngineNotify implements ClientModInitializer {
 	private void test() {
 		Item it = new Item();
 		it.id = "test|" + System.currentTimeMillis(); it.kind = "test"; it.sound = "pling";
-		it.title = "Engine Notify works"; it.text = "You'll see timers, crafts, contests and milestones like this";
+		it.title = "Herald works"; it.text = "You'll see timers, crafts, contests and milestones like this";
 		it.url = "https://app.todoist.com/app/project/6hw6qfjf5mVpPgGH";
 		it.cmds.add(new String[] { "Warp home", "/warp home" });
 		show(Minecraft.getInstance(), it);

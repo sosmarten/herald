@@ -17,7 +17,7 @@ jobs:
       - run: ./gradlew build --stacktrace
       - uses: actions/upload-artifact@v7
         with:
-          name: engine-notify
+          name: herald
           path: build/libs/*.jar
       # the built jar also goes to the "dist" branch, so Claude can fetch it with plain git
       - name: publish to dist branch

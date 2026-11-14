@@ -1,14 +1,14 @@
 {
 	"schemaVersion": 1,
-	"id": "enginenotify",
+	"id": "herald",
 	"version": "${version}",
-	"name": "Engine Notify",
-	"description": "Shows SkyBlock Engine notifications in game (toast, chat line, sound). Client-only: reads a local file written by the SkyBlock Engine bridge, sends nothing to any server.",
+	"name": "Herald",
+	"description": "Herald brings the SkyBlock Engine into the game: timers, crafts, contests and milestones as a toast, a chat line with buttons, and a sound. Client-only: reads a local file written by the SkyBlock Engine bridge; buttons run only /warp, /shnavigate, /recipe, /hub and /is, and only when you click them.",
 	"authors": ["Marten"],
 	"license": "MIT",
 	"environment": "client",
 	"entrypoints": {
-		"client": ["dev.marten.enginenotify.EngineNotify"]
+		"client": ["dev.marten.herald.Herald"]
 	},
 	"depends": {
 		"fabricloader": ">=0.20.1",
