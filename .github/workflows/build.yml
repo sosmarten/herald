@@ -12,13 +12,6 @@ jobs:
           distribution: 'microsoft'
       - run: chmod +x ./gradlew
       - run: ./gradlew build --stacktrace
-      - name: api dump (debug)
-        if: always()
-        run: |
-          jar=/home/runner/.gradle/caches/fabric-loom/26.2/minecraft-client.jar
-          javap -p -cp $jar net.minecraft.client.Minecraft | grep -i hud || true
-          javap -p -cp $jar net.minecraft.client.gui.Gui | grep -i hud || true
-          javap -cp $jar net.minecraft.client.gui.components.ChatComponent | grep -i "addMessage\|addClientSystemMessage" || true
       - uses: actions/upload-artifact@v7
         with:
           name: engine-notify
