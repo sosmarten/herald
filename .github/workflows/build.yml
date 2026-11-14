@@ -1,6 +1,9 @@
 name: build
 on: [push, workflow_dispatch]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -16,3 +19,12 @@ jobs:
         with:
           name: engine-notify
           path: build/libs/*.jar
+      # the built jar also goes to the "dist" branch, so Claude can fetch it with plain git
+      - name: publish to dist branch
+        if: github.ref == 'refs/heads/main'
+        run: |
+          mkdir /tmp/dist && cp build/libs/*.jar /tmp/dist/ && cd /tmp/dist
+          git init -q -b dist && git config user.name "github-actions" && git config user.email "actions@github.com"
+          echo "Built from ${GITHUB_SHA} at $(date -u +%FT%TZ)" > BUILD.txt
+          git add -A && git commit -q -m "build ${GITHUB_SHA::7}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" dist
