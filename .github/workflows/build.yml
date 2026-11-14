@@ -12,6 +12,11 @@ jobs:
           distribution: 'microsoft'
       - run: chmod +x ./gradlew
       - run: ./gradlew build --stacktrace
+      - name: api dump (debug)
+        if: always()
+        run: |
+          J=$(find ~/.gradle -name 'minecraft-*client*.jar' -o -name 'minecraft-*merged*.jar' -o -name 'minecraft-common*.jar' 2>/dev/null | head -5); echo "$J"
+          for jar in $J; do for c in net.minecraft.client.Minecraft net.minecraft.client.gui.Gui net.minecraft.client.gui.components.toasts.SystemToast net.minecraft.client.gui.components.toasts.ToastManager net.minecraft.client.gui.components.ChatComponent; do javap -cp "$jar" "$c" 2>/dev/null | grep -iE "toast|chat|gui |screen\(|player|level|addMessage|public static .*add|SystemToastId|class " | head -40; done; done
       - uses: actions/upload-artifact@v7
         with:
           name: engine-notify

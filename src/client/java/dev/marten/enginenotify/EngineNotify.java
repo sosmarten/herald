@@ -8,7 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.brigadier.Command;
 import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.loader.api.FabricLoader;
@@ -85,10 +85,10 @@ public class EngineNotify implements ClientModInitializer {
 			try { step(mc); } catch (Exception e) { LOG.warn("engine-notify: {}", e.toString()); }
 		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
-			ClientCommandManager.literal("enginenotify")
-				.then(ClientCommandManager.literal("test").executes(c -> { test(); return Command.SINGLE_SUCCESS; }))
-				.then(ClientCommandManager.literal("list").executes(c -> { list(); return Command.SINGLE_SUCCESS; }))
-				.then(ClientCommandManager.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
+			ClientCommands.literal("enginenotify")
+				.then(ClientCommands.literal("test").executes(c -> { test(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("list").executes(c -> { list(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
 		LOG.info("Engine Notify ready: {}", feedFile);
 	}
