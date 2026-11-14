@@ -7,6 +7,7 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.brigadier.Command;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -65,7 +66,7 @@ public class EngineNotify implements ClientModInitializer {
 	private int tick = 0;
 
 	static class Config {
-		boolean toast = true, chat = true, sound = true;
+		boolean toast = true, chat = true, sound = true, clipboard = true;
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
 	}
@@ -73,7 +74,16 @@ public class EngineNotify implements ClientModInitializer {
 	static class Item {
 		String id, kind, title, text, url, sound;
 		long at;
+		List<String[]> cmds = new ArrayList<>();          // {label, command}
 	}
+
+	/** Only these game commands can ever be run from a button (the engine feed is the only source). */
+	private static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is)( [A-Za-z0-9 '_\\-]{1,60})?$");
+	private final Map<String, String> tokens = new java.util.LinkedHashMap<>() {
+		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
+	};
+	private final Deque<String> runQueue = new ArrayDeque<>();
+	private int tokenSeq = 0;
 
 	@Override
 	public void onInitializeClient() {
@@ -81,6 +91,10 @@ public class EngineNotify implements ClientModInitializer {
 		loadConfig(true);
 		loadShown();
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+			if (!runQueue.isEmpty() && mc.player != null && mc.getConnection() != null) {
+				String cmd = runQueue.poll();
+				mc.getConnection().sendCommand(cmd.substring(1));   // same path as typing it in chat (his click)
+			}
 			if (++tick % 20 != 0) return;                     // once a second
 			try { step(mc); } catch (Exception e) { LOG.warn("engine-notify: {}", e.toString()); }
 		});
@@ -88,6 +102,8 @@ public class EngineNotify implements ClientModInitializer {
 			ClientCommands.literal("enginenotify")
 				.then(ClientCommands.literal("test").executes(c -> { test(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("list").executes(c -> { list(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("run").then(ClientCommands.argument("token", StringArgumentType.word())
+					.executes(c -> { run(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
 				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
 		LOG.info("Engine Notify ready: {}", feedFile);
@@ -127,6 +143,17 @@ public class EngineNotify implements ClientModInitializer {
 			MutableComponent line = prefix()
 				.append(Component.literal(title).withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD));
 			if (!text.isEmpty()) line.append(Component.literal("  " + text).withStyle(ChatFormatting.WHITE));
+			for (String[] c : it.cmds) {
+				String tok = Integer.toString(++tokenSeq, 36);
+				tokens.put(tok, c[1]);
+				line.append(Component.literal("  [" + clean(c[0]) + "]").withStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)
+					.withClickEvent(new ClickEvent.RunCommand("/enginenotify run " + tok))
+					.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to run " + c[1])))));
+			}
+			if (it.cmds.size() == 1 && cfg.clipboard) {
+				mc.keyboardHandler.setClipboard(it.cmds.get(0)[1]);
+				line.append(Component.literal("  (copied)").withStyle(ChatFormatting.DARK_GRAY));
+			}
 			if (it.url != null && it.url.startsWith("https://")) {
 				line.append(Component.literal("  [Open]").withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA).withUnderlined(true)
 					.withClickEvent(new ClickEvent.OpenUrl(URI.create(it.url)))
@@ -166,11 +193,19 @@ public class EngineNotify implements ClientModInitializer {
 		return b.toString().replaceAll("\\s{2,}", " ").trim();
 	}
 
+	private void run(String tok) {
+		String cmd = tokens.get(tok);
+		if (cmd == null) { chatLine(prefix().append(Component.literal("that button expired").withStyle(ChatFormatting.GRAY))); return; }
+		if (!CMD_OK.matcher(cmd).matches()) { LOG.warn("blocked command from feed: {}", cmd); return; }
+		runQueue.add(cmd);
+	}
+
 	private void test() {
 		Item it = new Item();
 		it.id = "test|" + System.currentTimeMillis(); it.kind = "test"; it.sound = "pling";
 		it.title = "Engine Notify works"; it.text = "You'll see timers, crafts, contests and milestones like this";
 		it.url = "https://app.todoist.com/app/project/6hw6qfjf5mVpPgGH";
+		it.cmds.add(new String[] { "Warp home", "/warp home" });
 		show(Minecraft.getInstance(), it);
 	}
 
@@ -208,6 +243,13 @@ public class EngineNotify implements ClientModInitializer {
 				it.id = str(j, "id"); it.kind = str(j, "kind"); it.title = str(j, "title"); it.text = str(j, "text");
 				it.url = str(j, "url"); it.sound = str(j, "sound");
 				it.at = j.has("at") ? j.get("at").getAsLong() : 0;
+				if (j.has("cmds") && j.get("cmds").isJsonArray()) {
+					for (JsonElement ce : j.getAsJsonArray("cmds")) {
+						JsonObject co = ce.getAsJsonObject();
+						String label = str(co, "label"), cmd = str(co, "cmd");
+						if (CMD_OK.matcher(cmd).matches()) it.cmds.add(new String[] { label.isEmpty() ? cmd : label, cmd });
+					}
+				}
 				if (it.id != null && !it.id.isEmpty()) next.add(it);
 			}
 			next.sort((a, b) -> Long.compare(a.at, b.at));
