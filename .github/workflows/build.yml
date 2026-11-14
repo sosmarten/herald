@@ -15,8 +15,10 @@ jobs:
       - name: api dump (debug)
         if: always()
         run: |
-          J=$(find ~/.gradle -name 'minecraft-*client*.jar' -o -name 'minecraft-*merged*.jar' -o -name 'minecraft-common*.jar' 2>/dev/null | head -5); echo "$J"
-          for jar in $J; do for c in net.minecraft.client.Minecraft net.minecraft.client.gui.Gui net.minecraft.client.gui.components.toasts.SystemToast net.minecraft.client.gui.components.toasts.ToastManager net.minecraft.client.gui.components.ChatComponent; do javap -cp "$jar" "$c" 2>/dev/null | grep -iE "toast|chat|gui |screen\(|player|level|addMessage|public static .*add|SystemToastId|class " | head -40; done; done
+          jar=/home/runner/.gradle/caches/fabric-loom/26.2/minecraft-client.jar
+          javap -p -cp $jar net.minecraft.client.gui.Gui | grep -i chat || true
+          javap -cp $jar net.minecraft.client.multiplayer.chat.ChatListener | head -40 || true
+          for c in $(unzip -Z1 $jar | grep -E '^net/minecraft/client/(gui/[A-Za-z]+|gui/hud/[A-Za-z]+|Minecraft)\.class$' | sed 's/\.class$//; s#/#.#g'); do javap -cp $jar $c 2>/dev/null | grep -E "ChatComponent [a-zA-Z]+\(\)" | sed "s#^#$c: #"; done
       - uses: actions/upload-artifact@v7
         with:
           name: engine-notify

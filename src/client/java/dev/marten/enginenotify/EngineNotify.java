@@ -120,7 +120,7 @@ public class EngineNotify implements ClientModInitializer {
 	private void show(Minecraft mc, Item it) {
 		String title = clean(it.title), text = clean(it.text);
 		if (cfg.toast) {
-			SystemToast.add(mc.getToastManager(), new SystemToast.SystemToastId(6000L),
+			SystemToast.add(mc.gui.toastManager(), new SystemToast.SystemToastId(6000L),
 				Component.literal(title).withStyle(ChatFormatting.GOLD), Component.literal(text));
 		}
 		if (cfg.chat) {
