@@ -12,6 +12,12 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import com.mojang.blaze3d.platform.InputConstants;
+import net.minecraft.client.KeyMapping;
+import net.minecraft.resources.Identifier;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
@@ -66,7 +72,9 @@ public class Herald implements ClientModInitializer {
 
 	static class Config {
 		boolean toast = true, chat = true, sound = true, clipboard = true;
-		String openIn = "app";                               // "app" = Todoist desktop app, "browser" = web
+		String openIn = "app";
+		boolean hud = true;                                  // trap route line at the top left
+		int hudX = 4, hudY = 4;                               // "app" = Todoist desktop app, "browser" = web
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
 	}
@@ -78,7 +86,7 @@ public class Herald implements ClientModInitializer {
 	}
 
 	/** Only these game commands can ever be run from a button (the engine feed is the only source). */
-	private static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is)( [A-Za-z0-9 '_\\-]{1,60})?$");
+	static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is)( [A-Za-z0-9 '_\\-]{1,60})?$");
 	private final Map<String, String> tokens = new java.util.LinkedHashMap<>() {
 		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
 	};
@@ -88,6 +96,8 @@ public class Herald implements ClientModInitializer {
 		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
 	};
 	private final Deque<String> runQueue = new ArrayDeque<>();
+	private TrapRoute route;
+	private KeyMapping nextKey;
 	private int tokenSeq = 0;
 
 	@Override
@@ -101,11 +111,26 @@ public class Herald implements ClientModInitializer {
 		} catch (Exception e) { LOG.warn("herald dir: {}", e.toString()); }
 		loadConfig(true);
 		loadShown();
+		route = new TrapRoute(this, dir);
+		nextKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.next", InputConstants.Type.KEYSYM, InputConstants.KEY_H,
+			KeyMapping.Category.register(Identifier.fromNamespaceAndPath("herald", "main"))));
+		ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
+			if (overlay) return;
+			try { route.onChat(message.getString()); } catch (Exception e) { LOG.warn("herald route: {}", e.toString()); }
+		});
+		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("herald", "route"), (g, delta) -> {
+			Minecraft mc = Minecraft.getInstance();
+			if (!cfg.hud || mc.player == null || mc.options.hideGui) return;
+			String t = route.hudText();
+			if (t == null) return;
+			g.textWithBackdrop(mc.font, Component.literal(t), cfg.hudX, cfg.hudY, mc.font.width(t), 0xFFFFD27A);
+		});
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (!runQueue.isEmpty() && mc.player != null && mc.getConnection() != null) {
 				String cmd = runQueue.poll();
 				mc.getConnection().sendCommand(cmd.substring(1));   // same path as typing it in chat (his click)
 			}
+			while (nextKey.consumeClick()) { if (mc.player != null && mc.screen == null) route.press(); }
 			if (++tick % 20 != 0) return;                     // once a second
 			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
 		});
@@ -117,6 +142,7 @@ public class Herald implements ClientModInitializer {
 					.executes(c -> { run(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
 				.then(ClientCommands.literal("open").then(ClientCommands.argument("token", StringArgumentType.word())
 					.executes(c -> { open(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
+				.then(ClientCommands.literal("next").executes(c -> { route.press(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
 		LOG.info("Herald ready: {}", feedFile);
@@ -136,6 +162,7 @@ public class Herald implements ClientModInitializer {
 			if (inWorld) show(mc, it); else waiting.add(it);
 		}
 		if (inWorld) while (!waiting.isEmpty()) show(mc, waiting.poll());
+		if (inWorld) route.announceIfNew();
 		if (changed) saveShown(now);
 	}
 
@@ -156,13 +183,7 @@ public class Herald implements ClientModInitializer {
 			MutableComponent line = prefix()
 				.append(Component.literal(title).withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD));
 			if (!text.isEmpty()) line.append(Component.literal("  " + text).withStyle(ChatFormatting.WHITE));
-			for (String[] c : it.cmds) {
-				String tok = Integer.toString(++tokenSeq, 36);
-				tokens.put(tok, c[1]);
-				line.append(Component.literal("  [" + clean(c[0]) + "]").withStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)
-					.withClickEvent(new ClickEvent.RunCommand("/herald run " + tok))
-					.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to run " + c[1])))));
-			}
+			for (String[] c : it.cmds) line.append(cmdButton(c[0], c[1]));
 			if (it.cmds.size() == 1 && cfg.clipboard) {
 				mc.keyboardHandler.setClipboard(it.cmds.get(0)[1]);
 				line.append(Component.literal("  (copied)").withStyle(ChatFormatting.DARK_GRAY));
@@ -186,13 +207,13 @@ public class Herald implements ClientModInitializer {
 		}
 	}
 
-	private static MutableComponent prefix() {
+	static MutableComponent prefix() {
 		return Component.literal("[").withStyle(ChatFormatting.DARK_GRAY)
 			.append(Component.literal("Herald").withStyle(ChatFormatting.AQUA))
 			.append(Component.literal("] ").withStyle(ChatFormatting.DARK_GRAY));
 	}
 
-	private static void chatLine(Component c) {
+	static void chatLine(Component c) {
 		Minecraft mc = Minecraft.getInstance();
 		if (mc.gui != null) mc.gui.hud.getChat().addClientSystemMessage(c);   // local only: never sent to the server
 	}
@@ -208,11 +229,45 @@ public class Herald implements ClientModInitializer {
 		return b.toString().replaceAll("\\s{2,}", " ").trim();
 	}
 
+	/** A green [label] button that runs cmd through /herald run (allowlisted, his click). */
+	MutableComponent cmdButton(String label, String cmd) {
+		String tok = Integer.toString(++tokenSeq, 36);
+		tokens.put(tok, cmd);
+		return Component.literal("  [" + clean(label) + "]").withStyle(Style.EMPTY.withColor(ChatFormatting.GREEN)
+			.withClickEvent(new ClickEvent.RunCommand("/herald run " + tok))
+			.withHoverEvent(new HoverEvent.ShowText(Component.literal("Click to run " + cmd))));
+	}
+
+	/** One allowlisted game command, sent on the next tick (only ever after his click or key press). */
+	void queueCmd(String cmd) {
+		if (cmd == null || !CMD_OK.matcher(cmd).matches()) { LOG.warn("blocked command: {}", cmd); return; }
+		runQueue.add(cmd);
+	}
+
+	void toast(String title, String text) {
+		Minecraft mc = Minecraft.getInstance();
+		if (!cfg.toast || mc.gui == null) return;
+		SystemToast.add(mc.gui.toastManager(), new SystemToast.SystemToastId(6000L),
+			Component.literal(clean(title)).withStyle(ChatFormatting.GOLD), Component.literal(clean(text)));
+	}
+
+	void ping(String sound) {
+		Minecraft mc = Minecraft.getInstance();
+		if (!cfg.sound) return;
+		net.minecraft.sounds.SoundEvent ev = switch (sound == null ? "" : sound) {
+			case "bell" -> SoundEvents.NOTE_BLOCK_BELL.value();
+			case "levelup" -> SoundEvents.PLAYER_LEVELUP;
+			default -> SoundEvents.NOTE_BLOCK_PLING.value();
+		};
+		mc.getSoundManager().play(SimpleSoundInstance.forUI(ev, 1.0f, cfg.volume));
+	}
+
+	String keyName() { return nextKey == null ? "H" : nextKey.getTranslatedKeyMessage().getString(); }
+
 	private void run(String tok) {
 		String cmd = tokens.get(tok);
 		if (cmd == null) { chatLine(prefix().append(Component.literal("that button expired").withStyle(ChatFormatting.GRAY))); return; }
-		if (!CMD_OK.matcher(cmd).matches()) { LOG.warn("blocked command from feed: {}", cmd); return; }
-		runQueue.add(cmd);
+		queueCmd(cmd);
 	}
 
 	/** Opens a Todoist task/project: in the desktop app via todoist:// (default) or the web page. */
@@ -287,6 +342,7 @@ public class Herald implements ClientModInitializer {
 			}
 			next.sort((a, b) -> Long.compare(a.at, b.at));
 			feed.clear(); feed.addAll(next);
+			route.update(o.has("route") && o.get("route").isJsonObject() ? o.getAsJsonObject("route") : null);
 		} catch (Exception e) { LOG.warn("feed.json: {}", e.toString()); }
 	}
 
