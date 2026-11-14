@@ -1,0 +1,228 @@
+package dev.marten.herald;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
+
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
+
+/**
+ * 🧭 Session guide (Herald 1.5.0, 14.11.2026): the engine's plan for this session as steps, in order
+ * (traps stop by stop, Experimentation Table, each minion upgrade, claims, gear, the next goals).
+ * Everything comes from feed.json "guide", so new kinds of steps need no new mod:
+ *   {id, steps: [{id, title, text, url, cmds: [{label, cmd}], done: {pattern, count}}]}
+ * Do-key (H): runs the current step's next command (one command per press). Done-key (K): marks the step done.
+ * A step with done.pattern finishes by itself when Hypixel's chat line shows up done.count times; a line counts
+ * for the FIRST open step whose pattern matches (so 2 trap stops with the same line fill up in order).
+ */
+final class Guide {
+	static final class Step {
+		String id = "", title = "", text = "", url = "";
+		final List<String[]> cmds = new ArrayList<>();
+		Pattern done; int need = 1;
+	}
+
+	private static final Pattern FORMAT = Pattern.compile("§.");
+
+	private final Herald h;
+	private final Path stateFile;
+	String id = "";
+	final List<Step> steps = new ArrayList<>();
+	final Set<String> doneIds = new HashSet<>();
+	final Map<String, Integer> counts = new HashMap<>(), presses = new HashMap<>();
+	boolean announced = false, finished = false;
+
+	Guide(Herald h, Path dir) { this.h = h; this.stateFile = dir.resolve("guide_state.json"); loadState(); }
+
+	static String plain(String raw) { return FORMAT.matcher(raw == null ? "" : raw).replaceAll("").trim(); }
+
+	// ------------------------------------------------------------ feed
+
+	void update(JsonObject g) {
+		if (g == null || !g.has("id")) { steps.clear(); return; }
+		String nid = g.get("id").getAsString();
+		List<Step> ns = new ArrayList<>();
+		JsonArray arr = g.has("steps") ? g.getAsJsonArray("steps") : new JsonArray();
+		for (JsonElement e : arr) {
+			JsonObject j = e.getAsJsonObject();
+			Step s = new Step();
+			s.id = str(j, "id"); s.title = Herald.clean(str(j, "title")); s.text = Herald.clean(str(j, "text")); s.url = str(j, "url");
+			if (s.id.isEmpty() || s.title.isEmpty()) continue;
+			if (j.has("cmds")) for (JsonElement ce : j.getAsJsonArray("cmds")) {
+				JsonObject co = ce.getAsJsonObject();
+				String cmd = str(co, "cmd");
+				if (Herald.CMD_OK.matcher(cmd).matches()) s.cmds.add(new String[] { str(co, "label").isEmpty() ? cmd : str(co, "label"), cmd });
+			}
+			if (j.has("done") && j.get("done").isJsonObject()) {
+				JsonObject d = j.getAsJsonObject("done");
+				String p = str(d, "pattern");
+				if (!p.isEmpty() && p.length() < 300) {
+					try { s.done = Pattern.compile(p); } catch (PatternSyntaxException x) { Herald.LOG.warn("guide pattern: {}", p); }
+				}
+				s.need = Math.max(1, d.has("count") ? d.get("count").getAsInt() : 1);
+			}
+			ns.add(s);
+		}
+		if (!nid.equals(id)) { id = nid; doneIds.clear(); counts.clear(); presses.clear(); announced = false; finished = false; }
+		steps.clear(); steps.addAll(ns);
+		if (current() != null) finished = false;
+		saveState();
+	}
+
+	Step current() {
+		for (Step s : steps) if (!doneIds.contains(s.id)) return s;
+		return null;
+	}
+
+	int position(Step s) { return steps.indexOf(s) + 1; }
+
+	/** Once per session, when he's in a world: the plan in one chat block. */
+	void announceIfNew() {
+		if (steps.isEmpty() || announced || current() == null) return;
+		announced = true; saveState();
+		Herald.chatLine(Herald.prefix().append(Component.literal("Session plan").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD))
+			.append(Component.literal("  " + steps.size() + " steps · " + h.doKey() + " = do, " + h.doneKey() + " = done/skip").withStyle(ChatFormatting.GRAY)));
+		int i = 0;
+		for (Step s : steps) {
+			i++;
+			if (i > 12) { Herald.chatLine(Component.literal("   +" + (steps.size() - 12) + " more").withStyle(ChatFormatting.DARK_GRAY)); break; }
+			Herald.chatLine(Component.literal("   " + i + ". ").withStyle(ChatFormatting.DARK_GRAY)
+				.append(Component.literal(s.title).withStyle(doneIds.contains(s.id) ? ChatFormatting.DARK_GRAY : ChatFormatting.WHITE)));
+		}
+		Step c = current();
+		if (c != null) h.toast("Step 1: " + c.title, h.doKey() + ": " + action(c));
+	}
+
+	// ------------------------------------------------------------ keys
+
+	void pressDo() {
+		Step s = current();
+		if (s == null) { Herald.chatLine(Herald.prefix().append(Component.literal(steps.isEmpty() ? "no session plan right now" : "plan done for now").withStyle(ChatFormatting.GRAY))); return; }
+		int n = presses.getOrDefault(s.id, 0);
+		if (s.cmds.isEmpty()) {
+			MutableComponent line = Herald.prefix().append(Component.literal(s.title).withStyle(ChatFormatting.GOLD));
+			if (!s.text.isEmpty()) line.append(Component.literal("  " + s.text).withStyle(ChatFormatting.WHITE));
+			if (h.openable(s.url)) line.append(h.openButton(s.url));
+			Herald.chatLine(line);
+		} else {
+			h.queueCmd(s.cmds.get(Math.min(n, s.cmds.size() - 1))[1]);
+		}
+		presses.put(s.id, n + 1);
+		saveState();
+	}
+
+	void pressDone() {
+		Step s = current();
+		if (s == null) return;
+		complete(s, true);
+	}
+
+	// ------------------------------------------------------------ chat
+
+	void onChat(String raw) {
+		String line = plain(raw);
+		if (line.isEmpty()) return;
+		for (Step s : steps) {
+			if (doneIds.contains(s.id) || s.done == null) continue;
+			if (!s.done.matcher(line).find()) continue;
+			int c = counts.getOrDefault(s.id, 0) + 1;
+			counts.put(s.id, c);
+			if (c >= s.need) complete(s, false);
+			else { h.ping("pling"); saveState(); }
+			return;                        // one line = one step
+		}
+	}
+
+	private void complete(Step s, boolean byKey) {
+		doneIds.add(s.id);
+		Step nx = current();
+		if (nx == null) {
+			if (!finished) {
+				finished = true;
+				h.toast("Plan done", byKey ? "Skipped: " + s.title : "Last: " + s.title);
+				h.ping("levelup");
+				Herald.chatLine(Herald.prefix().append(Component.literal("Session plan done").withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD))
+					.append(Component.literal("  " + steps.size() + " steps").withStyle(ChatFormatting.GRAY)));
+			}
+		} else {
+			h.toast((byKey ? "Skipped: " : "Done: ") + s.title, "Next: " + nx.title + " · " + h.doKey() + ": " + action(nx));
+			h.ping(byKey ? "pling" : "bell");
+			MutableComponent line = Herald.prefix().append(Component.literal("Next: ").withStyle(ChatFormatting.GRAY))
+				.append(Component.literal(nx.title).withStyle(ChatFormatting.GOLD));
+			if (!nx.text.isEmpty()) line.append(Component.literal("  " + nx.text).withStyle(ChatFormatting.WHITE));
+			for (String[] c : nx.cmds) line.append(h.cmdButton(c[0], c[1]));
+			if (h.openable(nx.url)) line.append(h.openButton(nx.url));
+			Herald.chatLine(line);
+		}
+		saveState();
+	}
+
+	String action(Step s) {
+		if (s.cmds.isEmpty()) return s.text.isEmpty() ? "show what to do" : s.text;
+		int n = presses.getOrDefault(s.id, 0);
+		return s.cmds.get(Math.min(n, s.cmds.size() - 1))[0];
+	}
+
+	/** HUD lines for the current step (empty = nothing to show). */
+	List<String> hud() {
+		List<String> out = new ArrayList<>();
+		Step s = current();
+		if (s == null) return out;
+		String prog = s.done != null && s.need > 1 ? "  " + counts.getOrDefault(s.id, 0) + "/" + s.need : "";
+		out.add(position(s) + "/" + steps.size() + "  " + s.title + prog);
+		out.add(h.doKey() + ": " + action(s) + "   " + h.doneKey() + ": done");
+		int i = steps.indexOf(s);
+		for (int k = i + 1; k < steps.size(); k++) {
+			if (!doneIds.contains(steps.get(k).id)) { out.add("then: " + steps.get(k).title); break; }
+		}
+		return out;
+	}
+
+	// ------------------------------------------------------------ state
+
+	private void loadState() {
+		try {
+			if (!Files.exists(stateFile)) return;
+			JsonObject o = JsonParser.parseString(Files.readString(stateFile, StandardCharsets.UTF_8)).getAsJsonObject();
+			id = str(o, "id");
+			announced = o.has("announced") && o.get("announced").getAsBoolean();
+			finished = o.has("finished") && o.get("finished").getAsBoolean();
+			if (o.has("done")) for (JsonElement e : o.getAsJsonArray("done")) doneIds.add(e.getAsString());
+			if (o.has("counts")) for (String k : o.getAsJsonObject("counts").keySet()) counts.put(k, o.getAsJsonObject("counts").get(k).getAsInt());
+			if (o.has("presses")) for (String k : o.getAsJsonObject("presses").keySet()) presses.put(k, o.getAsJsonObject("presses").get(k).getAsInt());
+		} catch (Exception e) { Herald.LOG.warn("guide_state.json: {}", e.toString()); }
+	}
+
+	private void saveState() {
+		try {
+			JsonObject o = new JsonObject();
+			o.addProperty("id", id); o.addProperty("announced", announced); o.addProperty("finished", finished);
+			JsonArray d = new JsonArray(); for (String x : doneIds) d.add(x); o.add("done", d);
+			JsonObject c = new JsonObject(); counts.forEach(c::addProperty); o.add("counts", c);
+			JsonObject p = new JsonObject(); presses.forEach(p::addProperty); o.add("presses", p);
+			Files.writeString(stateFile, o.toString(), StandardCharsets.UTF_8);
+		} catch (Exception e) { Herald.LOG.warn("guide_state.json: {}", e.toString()); }
+	}
+
+	static String str(JsonObject j, String k) {
+		return j.has(k) && !j.get(k).isJsonNull() ? j.get(k).getAsString() : "";
+	}
+
+	@SuppressWarnings("unused")
+	private static boolean matches(Matcher m) { return m.find(); }
+}

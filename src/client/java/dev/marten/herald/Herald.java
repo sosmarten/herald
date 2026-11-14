@@ -73,7 +73,7 @@ public class Herald implements ClientModInitializer {
 	static class Config {
 		boolean toast = true, chat = true, sound = true, clipboard = true;
 		String openIn = "app";
-		boolean hud = true;                                  // trap route line at the top left
+		boolean hud = true;                                  // session guide + counters + next timers, top left
 		int hudX = 4, hudY = 4;                               // "app" = Todoist desktop app, "browser" = web
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
@@ -86,7 +86,7 @@ public class Herald implements ClientModInitializer {
 	}
 
 	/** Only these game commands can ever be run from a button (the engine feed is the only source). */
-	static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is)( [A-Za-z0-9 '_\\-]{1,60})?$");
+	static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is|pickupstash)( [A-Za-z0-9 '_\\-]{1,60})?$");
 	private final Map<String, String> tokens = new java.util.LinkedHashMap<>() {
 		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
 	};
@@ -96,8 +96,9 @@ public class Herald implements ClientModInitializer {
 		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
 	};
 	private final Deque<String> runQueue = new ArrayDeque<>();
-	private TrapRoute route;
-	private KeyMapping nextKey;
+	private Guide guide;
+	private Watch watch;
+	private KeyMapping doKeyMap, doneKeyMap;
 	private int tokenSeq = 0;
 
 	@Override
@@ -111,26 +112,39 @@ public class Herald implements ClientModInitializer {
 		} catch (Exception e) { LOG.warn("herald dir: {}", e.toString()); }
 		loadConfig(true);
 		loadShown();
-		route = new TrapRoute(this, dir);
-		nextKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.next", InputConstants.Type.KEYSYM, InputConstants.KEY_H,
-			KeyMapping.Category.register(Identifier.fromNamespaceAndPath("herald", "main"))));
+		guide = new Guide(this, dir);
+		watch = new Watch(this);
+		KeyMapping.Category cat = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("herald", "main"));
+		doKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.do", InputConstants.Type.KEYSYM, InputConstants.KEY_H, cat));
+		doneKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.done", InputConstants.Type.KEYSYM, InputConstants.KEY_K, cat));
 		ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
 			if (overlay) return;
-			try { route.onChat(message.getString()); } catch (Exception e) { LOG.warn("herald route: {}", e.toString()); }
+			String txt = message.getString();
+			if (txt.startsWith("[Herald]")) return;
+			try { guide.onChat(txt); } catch (Exception e) { LOG.warn("herald guide: {}", e.toString()); }
+			try { watch.onChat(txt); } catch (Exception e) { LOG.warn("herald watch: {}", e.toString()); }
 		});
-		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("herald", "route"), (g, delta) -> {
+		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("herald", "hud"), (g, delta) -> {
 			Minecraft mc = Minecraft.getInstance();
 			if (!cfg.hud || mc.player == null) return;
-			String t = route.hudText();
-			if (t == null) return;
-			g.textWithBackdrop(mc.font, Component.literal(t), cfg.hudX, cfg.hudY, mc.font.width(t), 0xFFFFD27A);
+			int y = cfg.hudY;
+			List<String> gl = guide.hud();
+			for (int i = 0; i < gl.size(); i++) {
+				String t = gl.get(i);
+				g.textWithBackdrop(mc.font, Component.literal(t), cfg.hudX, y, mc.font.width(t), i == 0 ? 0xFFFFD27A : i == 1 ? 0xFFFFFFFF : 0xFFAAAAAA);
+				y += 11;
+			}
+			for (String t : watch.hud()) { g.textWithBackdrop(mc.font, Component.literal(t), cfg.hudX, y, mc.font.width(t), 0xFF7FD8FF); y += 11; }
+			String nt = nextTimers();
+			if (nt != null) g.textWithBackdrop(mc.font, Component.literal(nt), cfg.hudX, y, mc.font.width(nt), 0xFFAAAAAA);
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (!runQueue.isEmpty() && mc.player != null && mc.getConnection() != null) {
 				String cmd = runQueue.poll();
 				mc.getConnection().sendCommand(cmd.substring(1));   // same path as typing it in chat (his click)
 			}
-			while (nextKey.consumeClick()) { if (mc.player != null) route.press(); }
+			while (doKeyMap.consumeClick()) { if (mc.player != null) guide.pressDo(); }
+			while (doneKeyMap.consumeClick()) { if (mc.player != null) guide.pressDone(); }
 			if (++tick % 20 != 0) return;                     // once a second
 			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
 		});
@@ -142,7 +156,9 @@ public class Herald implements ClientModInitializer {
 					.executes(c -> { run(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
 				.then(ClientCommands.literal("open").then(ClientCommands.argument("token", StringArgumentType.word())
 					.executes(c -> { open(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
-				.then(ClientCommands.literal("next").executes(c -> { route.press(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("do").executes(c -> { guide.pressDo(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("done").executes(c -> { guide.pressDone(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("plan").executes(c -> { guide.announced = false; guide.announceIfNew(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
 		LOG.info("Herald ready: {}", feedFile);
@@ -162,7 +178,7 @@ public class Herald implements ClientModInitializer {
 			if (inWorld) show(mc, it); else waiting.add(it);
 		}
 		if (inWorld) while (!waiting.isEmpty()) show(mc, waiting.poll());
-		if (inWorld) route.announceIfNew();
+		if (inWorld) guide.announceIfNew();
 		if (changed) saveShown(now);
 	}
 
@@ -188,13 +204,7 @@ public class Herald implements ClientModInitializer {
 				mc.keyboardHandler.setClipboard(it.cmds.get(0)[1]);
 				line.append(Component.literal("  (copied)").withStyle(ChatFormatting.DARK_GRAY));
 			}
-			if (it.url != null && TODOIST_URL.matcher(it.url).matches()) {
-				String tok = Integer.toString(++tokenSeq, 36);
-				links.put(tok, it.url);
-				line.append(Component.literal("  [Open]").withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA).withUnderlined(true)
-					.withClickEvent(new ClickEvent.RunCommand("/herald open " + tok))
-					.withHoverEvent(new HoverEvent.ShowText(Component.literal("browser".equals(cfg.openIn) ? "Open in Todoist (browser)" : "Open in the Todoist app")))));
-			}
+			if (openable(it.url)) line.append(openButton(it.url));
 			chatLine(line);
 		}
 		if (cfg.sound) {
@@ -262,7 +272,32 @@ public class Herald implements ClientModInitializer {
 		mc.getSoundManager().play(SimpleSoundInstance.forUI(ev, 1.0f, cfg.volume));
 	}
 
-	String keyName() { return nextKey == null ? "H" : nextKey.getTranslatedKeyMessage().getString(); }
+	String doKey() { return doKeyMap == null ? "H" : doKeyMap.getTranslatedKeyMessage().getString(); }
+	String doneKey() { return doneKeyMap == null ? "K" : doneKeyMap.getTranslatedKeyMessage().getString(); }
+
+	boolean openable(String url) { return url != null && TODOIST_URL.matcher(url).matches(); }
+
+	MutableComponent openButton(String url) {
+		String tok = Integer.toString(++tokenSeq, 36);
+		links.put(tok, url);
+		return Component.literal("  [Open]").withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA).withUnderlined(true)
+			.withClickEvent(new ClickEvent.RunCommand("/herald open " + tok))
+			.withHoverEvent(new HoverEvent.ShowText(Component.literal("browser".equals(cfg.openIn) ? "Open in Todoist (browser)" : "Open in the Todoist app"))));
+	}
+
+	/** "next: 06:02 5 traps out · 12:00 Minions ready to craft" from the timed feed items (next 24 h, max 2). */
+	private String nextTimers() {
+		long now = System.currentTimeMillis();
+		StringBuilder b = new StringBuilder();
+		int n = 0;
+		SimpleDateFormat f = new SimpleDateFormat("HH:mm");
+		for (Item it : feed) {
+			if (it.at <= now || it.at > now + 86_400_000L || "live".equals(it.kind)) continue;
+			if (n++ >= 2) break;
+			b.append(n == 1 ? "next: " : "  ·  ").append(f.format(new Date(it.at))).append(" ").append(clean(it.title));
+		}
+		return n == 0 ? null : b.toString();
+	}
 
 	private void run(String tok) {
 		String cmd = tokens.get(tok);
@@ -342,7 +377,8 @@ public class Herald implements ClientModInitializer {
 			}
 			next.sort((a, b) -> Long.compare(a.at, b.at));
 			feed.clear(); feed.addAll(next);
-			route.update(o.has("route") && o.get("route").isJsonObject() ? o.getAsJsonObject("route") : null);
+			guide.update(o.has("guide") && o.get("guide").isJsonObject() ? o.getAsJsonObject("guide") : null);
+			watch.update(o);
 		} catch (Exception e) { LOG.warn("feed.json: {}", e.toString()); }
 	}
 
