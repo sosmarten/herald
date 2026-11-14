@@ -26,7 +26,6 @@ import net.minecraft.sounds.SoundEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -67,6 +66,7 @@ public class Herald implements ClientModInitializer {
 
 	static class Config {
 		boolean toast = true, chat = true, sound = true, clipboard = true;
+		String openIn = "app";                               // "app" = Todoist desktop app, "browser" = web
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
 	}
@@ -80,6 +80,11 @@ public class Herald implements ClientModInitializer {
 	/** Only these game commands can ever be run from a button (the engine feed is the only source). */
 	private static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is)( [A-Za-z0-9 '_\\-]{1,60})?$");
 	private final Map<String, String> tokens = new java.util.LinkedHashMap<>() {
+		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
+	};
+	/** [Open] targets: only Todoist task/project pages, so a button can never open anything else. */
+	private static final java.util.regex.Pattern TODOIST_URL = java.util.regex.Pattern.compile("^https://(app\\.)?todoist\\.com/app/(task|project)/(?:[A-Za-z0-9\\-]*-)?([A-Za-z0-9]{1,40})$");
+	private final Map<String, String> links = new java.util.LinkedHashMap<>() {
 		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
 	};
 	private final Deque<String> runQueue = new ArrayDeque<>();
@@ -110,6 +115,8 @@ public class Herald implements ClientModInitializer {
 				.then(ClientCommands.literal("list").executes(c -> { list(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("run").then(ClientCommands.argument("token", StringArgumentType.word())
 					.executes(c -> { run(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
+				.then(ClientCommands.literal("open").then(ClientCommands.argument("token", StringArgumentType.word())
+					.executes(c -> { open(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
 				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
 		LOG.info("Herald ready: {}", feedFile);
@@ -160,10 +167,12 @@ public class Herald implements ClientModInitializer {
 				mc.keyboardHandler.setClipboard(it.cmds.get(0)[1]);
 				line.append(Component.literal("  (copied)").withStyle(ChatFormatting.DARK_GRAY));
 			}
-			if (it.url != null && it.url.startsWith("https://")) {
+			if (it.url != null && TODOIST_URL.matcher(it.url).matches()) {
+				String tok = Integer.toString(++tokenSeq, 36);
+				links.put(tok, it.url);
 				line.append(Component.literal("  [Open]").withStyle(Style.EMPTY.withColor(ChatFormatting.AQUA).withUnderlined(true)
-					.withClickEvent(new ClickEvent.OpenUrl(URI.create(it.url)))
-					.withHoverEvent(new HoverEvent.ShowText(Component.literal("Open in Todoist")))));
+					.withClickEvent(new ClickEvent.RunCommand("/herald open " + tok))
+					.withHoverEvent(new HoverEvent.ShowText(Component.literal("browser".equals(cfg.openIn) ? "Open in Todoist (browser)" : "Open in the Todoist app")))));
 			}
 			chatLine(line);
 		}
@@ -204,6 +213,24 @@ public class Herald implements ClientModInitializer {
 		if (cmd == null) { chatLine(prefix().append(Component.literal("that button expired").withStyle(ChatFormatting.GRAY))); return; }
 		if (!CMD_OK.matcher(cmd).matches()) { LOG.warn("blocked command from feed: {}", cmd); return; }
 		runQueue.add(cmd);
+	}
+
+	/** Opens a Todoist task/project: in the desktop app via todoist:// (default) or the web page. */
+	private void open(String tok) {
+		String url = links.get(tok);
+		if (url == null) { chatLine(prefix().append(Component.literal("that link expired").withStyle(ChatFormatting.GRAY))); return; }
+		java.util.regex.Matcher m = TODOIST_URL.matcher(url);
+		if (!m.matches()) { LOG.warn("blocked link from feed: {}", url); return; }
+		String target = "browser".equals(cfg.openIn) ? url : "todoist://" + m.group(2) + "?id=" + m.group(3);
+		try {
+			String os = System.getProperty("os.name", "").toLowerCase(java.util.Locale.ROOT);
+			ProcessBuilder pb = os.contains("win") ? new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", target)
+				: os.contains("mac") ? new ProcessBuilder("open", target) : new ProcessBuilder("xdg-open", target);
+			pb.redirectErrorStream(true).start().getOutputStream().close();
+		} catch (Exception e) {
+			LOG.warn("herald open: {}", e.toString());
+			chatLine(prefix().append(Component.literal("couldn't open Todoist").withStyle(ChatFormatting.RED)));
+		}
 	}
 
 	private void test() {
