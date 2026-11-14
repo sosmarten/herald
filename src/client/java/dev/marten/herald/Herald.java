@@ -120,7 +120,7 @@ public class Herald implements ClientModInitializer {
 		});
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("herald", "route"), (g, delta) -> {
 			Minecraft mc = Minecraft.getInstance();
-			if (!cfg.hud || mc.player == null || mc.options.hideGui) return;
+			if (!cfg.hud || mc.player == null) return;
 			String t = route.hudText();
 			if (t == null) return;
 			g.textWithBackdrop(mc.font, Component.literal(t), cfg.hudX, cfg.hudY, mc.font.width(t), 0xFFFFD27A);
@@ -130,7 +130,7 @@ public class Herald implements ClientModInitializer {
 				String cmd = runQueue.poll();
 				mc.getConnection().sendCommand(cmd.substring(1));   // same path as typing it in chat (his click)
 			}
-			while (nextKey.consumeClick()) { if (mc.player != null && mc.screen == null) route.press(); }
+			while (nextKey.consumeClick()) { if (mc.player != null) route.press(); }
 			if (++tick % 20 != 0) return;                     // once a second
 			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
 		});
