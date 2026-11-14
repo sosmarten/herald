@@ -16,9 +16,9 @@ jobs:
         if: always()
         run: |
           jar=/home/runner/.gradle/caches/fabric-loom/26.2/minecraft-client.jar
-          javap -p -cp $jar net.minecraft.client.gui.Gui | grep -i chat || true
-          javap -cp $jar net.minecraft.client.multiplayer.chat.ChatListener | head -40 || true
-          for c in $(unzip -Z1 $jar | grep -E '^net/minecraft/client/(gui/[A-Za-z]+|gui/hud/[A-Za-z]+|Minecraft)\.class$' | sed 's/\.class$//; s#/#.#g'); do javap -cp $jar $c 2>/dev/null | grep -E "ChatComponent [a-zA-Z]+\(\)" | sed "s#^#$c: #"; done
+          javap -p -cp $jar net.minecraft.client.Minecraft | grep -i hud || true
+          javap -p -cp $jar net.minecraft.client.gui.Gui | grep -i hud || true
+          javap -cp $jar net.minecraft.client.gui.components.ChatComponent | grep -i "addMessage\|addClientSystemMessage" || true
       - uses: actions/upload-artifact@v7
         with:
           name: engine-notify
