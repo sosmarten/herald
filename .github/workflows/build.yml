@@ -15,6 +15,13 @@ jobs:
           distribution: 'microsoft'
       - run: chmod +x ./gradlew
       - run: ./gradlew build --stacktrace
+      - name: api dump (debug)
+        if: always()
+        run: |
+          jar=/home/runner/.gradle/caches/fabric-loom/26.2/minecraft-client.jar
+          for c in net.minecraft.network.chat.ClickEvent 'net.minecraft.network.chat.ClickEvent$RunCommand' 'net.minecraft.network.chat.ClickEvent$CopyToClipboard' 'net.minecraft.network.chat.ClickEvent$SuggestCommand' net.minecraft.client.KeyboardHandler net.minecraft.client.multiplayer.ClientPacketListener; do echo "== $c"; javap -cp $jar "$c" 2>&1 | grep -iE "class|record|Clipboard|Unattended|sendCommand|RunCommand|public .*\(java.lang.String" | head -20; done
+          echo "== Minecraft keyboard"; javap -cp $jar net.minecraft.client.Minecraft | grep -i "keyboard" || true
+          echo "== Screen click"; javap -p -cp $jar net.minecraft.client.gui.screens.Screen | grep -iE "click|command" | head -20
       - uses: actions/upload-artifact@v7
         with:
           name: engine-notify
