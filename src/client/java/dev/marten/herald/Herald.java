@@ -75,7 +75,8 @@ public class Herald implements ClientModInitializer {
 		boolean toast = true, chat = true, sound = true, clipboard = true;
 		String openIn = "app";
 		boolean hud = true;                                  // session guide + counters + next timers, top left
-		int hudX = 4, hudY = -1;                             // hudY -1 = left side, a bit above the middle (clear of the top-left mod HUDs)                               // "app" = Todoist desktop app, "browser" = web
+		int hudX = 4, hudY = -1;                             // hudY -1 = left side, a bit above the middle (clear of the top-left mod HUDs)
+		int hudMaxWidth = 190;                               // longer lines end in "…" so the panel stays narrow
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
 	}
@@ -84,6 +85,45 @@ public class Herald implements ClientModInitializer {
 		String id, kind, title, text, url, sound;
 		long at;
 		List<String[]> cmds = new ArrayList<>();          // {label, command}
+	}
+
+	/**
+	 * 1.8.0 panel look, read from his SkyHanni Custom Scoreboard (gui.customScoreboard.background in
+	 * config/skyhanni/config.json: color "chroma:alpha:r:g:b", borderSize, roundedCornerSmoothness), so Herald always
+	 * matches that box. Falls back to his values from 15.11.2026 (black at alpha 80, 5 px padding, radius 10).
+	 */
+	static final class Look { int argb = 0x50000000, pad = 5, radius = 10; }
+	private Look look; private long lookMtime = -2;
+
+	private Look look() {
+		Path f = FabricLoader.getInstance().getConfigDir().resolve("skyhanni").resolve("config.json");
+		long m = -1;
+		try { if (Files.exists(f)) m = Files.getLastModifiedTime(f).toMillis(); } catch (Exception ignored) { }
+		if (look != null && m == lookMtime) return look;
+		lookMtime = m;
+		Look l = new Look();
+		try {
+			if (m > 0) {
+				JsonObject bg = JsonParser.parseString(Files.readString(f, StandardCharsets.UTF_8)).getAsJsonObject()
+					.getAsJsonObject("gui").getAsJsonObject("customScoreboard").getAsJsonObject("background");
+				if (bg.has("enabled") && bg.get("enabled").getAsBoolean()) {
+					String[] c = bg.get("color").getAsString().split(":");
+					if (c.length == 5) l.argb = (Integer.parseInt(c[1]) & 255) << 24 | (Integer.parseInt(c[2]) & 255) << 16 | (Integer.parseInt(c[3]) & 255) << 8 | (Integer.parseInt(c[4]) & 255);
+					if (bg.has("borderSize")) l.pad = Math.max(2, Math.min(12, bg.get("borderSize").getAsInt()));
+					if (bg.has("roundedCornerSmoothness")) l.radius = Math.max(0, Math.min(16, bg.get("roundedCornerSmoothness").getAsInt()));
+				}
+			}
+		} catch (Exception e) { LOG.warn("skyhanni look: {}", e.toString()); }
+		look = l;
+		return l;
+	}
+
+	/** Cuts a HUD line to maxW pixels with "…" so one long step never makes the whole panel wide. */
+	private static String fit(Minecraft mc, String s, int maxW) {
+		if (mc.font.width(s) <= maxW) return s;
+		String t = s;
+		while (t.length() > 1 && mc.font.width(t + "…") > maxW) t = t.substring(0, t.length() - 1);
+		return t.trim() + "…";
 	}
 
 	/** Only these game commands can ever be run from a button (the engine feed is the only source). */
@@ -132,25 +172,37 @@ public class Herald implements ClientModInitializer {
 			List<String> wl = watch.hud();
 			String nt = nextTimers();
 			if (gl.isEmpty() && wl.isEmpty() && nt == null) return;
-			// one solid dark panel with a gold edge, so every line reads on snow, lava or sky
+			// 1.8.0: same look as his SkyHanni scoreboard (see Style): see-through rounded box, centered gold title, compact rows
+			Look st = look();
+			int maxW = Math.max(120, cfg.hudMaxWidth);
 			List<Component> rows = new ArrayList<>();
-			List<Integer> gaps = new ArrayList<>();
+			List<Boolean> center = new ArrayList<>();
 			String prog = guide.progress();
 			rows.add(Component.literal("HERALD").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
-				.append(Component.literal(prog.isEmpty() ? "" : "   " + prog).withStyle(ChatFormatting.GRAY))); gaps.add(4);
+				.append(Component.literal(prog.isEmpty() ? "" : "  " + prog).withStyle(ChatFormatting.GRAY))); center.add(true);
 			for (int i = 0; i < gl.size(); i++) {
 				ChatFormatting c = i == 0 ? ChatFormatting.YELLOW : i == 1 ? ChatFormatting.WHITE : ChatFormatting.GRAY;
-				rows.add(Component.literal(gl.get(i)).withStyle(c)); gaps.add(i == gl.size() - 1 ? 4 : 1);
+				rows.add(Component.literal(fit(mc, gl.get(i), maxW)).withStyle(c)); center.add(false);
 			}
-			for (String t : wl) { rows.add(Component.literal(t).withStyle(ChatFormatting.AQUA)); gaps.add(1); }
-			if (nt != null) { rows.add(Component.literal(nt).withStyle(ChatFormatting.GRAY)); gaps.add(1); }
+			for (String t : wl) { rows.add(Component.literal(fit(mc, t, maxW)).withStyle(ChatFormatting.AQUA)); center.add(false); }
+			if (nt != null) { rows.add(Component.literal(fit(mc, nt, maxW)).withStyle(ChatFormatting.DARK_GRAY)); center.add(false); }
 			int w = 0; for (Component r : rows) w = Math.max(w, mc.font.width(r));
-			int lh = mc.font.lineHeight, hgt = 0; for (int k = 0; k < rows.size(); k++) hgt += lh + gaps.get(k);
-			int x = cfg.hudX + 5, y = cfg.hudY >= 0 ? cfg.hudY : (int) (g.guiHeight() * 0.36);
-			g.fill(x - 5, y - 4, x + w + 5, y + hgt + 1, 0xD8101014);          // panel
-			g.fill(x - 5, y - 4, x - 3, y + hgt + 1, 0xFFFFAA00);              // gold edge
-			g.fill(x, y + lh + 1, x + w, y + lh + 2, 0x66FFAA00);              // line under the title
-			for (int k = 0; k < rows.size(); k++) { g.text(mc.font, rows.get(k), x, y, 0xFFFFFFFF, true); y += lh + gaps.get(k); }
+			int lh = mc.font.lineHeight, gap = 2, hgt = rows.size() * lh + (rows.size() - 1) * gap;
+			int pad = st.pad, x = cfg.hudX + pad, y = cfg.hudY >= 0 ? cfg.hudY + pad : (int) (g.guiHeight() * 0.36);
+			int x0 = x - pad, y0 = y - pad, x1 = x + w + pad, y1 = y + hgt + pad;
+			int r = Math.max(0, Math.min(st.radius, Math.min(x1 - x0, y1 - y0) / 2));
+			g.fill(x0, y0 + r, x1, y1 - r, st.argb);                          // middle band
+			for (int i = 0; i < r; i++) {                                      // rounded top + bottom rows (no overlap, so the alpha stays even)
+				double dy = r - i - 0.5;
+				int in = (int) Math.round(r - Math.sqrt(Math.max(0, r * r - dy * dy)));
+				g.fill(x0 + in, y0 + i, x1 - in, y0 + i + 1, st.argb);
+				g.fill(x0 + in, y1 - i - 1, x1 - in, y1 - i, st.argb);
+			}
+			for (int k = 0; k < rows.size(); k++) {
+				int rx = center.get(k) ? x + (w - mc.font.width(rows.get(k))) / 2 : x;
+				g.text(mc.font, rows.get(k), rx, y, 0xFFFFFFFF, true);
+				y += lh + gap;
+			}
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (!runQueue.isEmpty() && mc.player != null && mc.getConnection() != null) {
@@ -178,7 +230,7 @@ public class Herald implements ClientModInitializer {
 					.then(ClientCommands.literal("reset").executes(c -> { setHud(4, -1); return Command.SINGLE_SUCCESS; }))
 					.then(ClientCommands.argument("x", IntegerArgumentType.integer(0, 4000)).then(ClientCommands.argument("y", IntegerArgumentType.integer(0, 4000))
 						.executes(c -> { setHud(IntegerArgumentType.getInteger(c, "x"), IntegerArgumentType.getInteger(c, "y")); return Command.SINGLE_SUCCESS; }))))
-				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; look = null; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
 		LOG.info("Herald ready: {}", feedFile);
 	}
@@ -311,19 +363,19 @@ public class Herald implements ClientModInitializer {
 			.withHoverEvent(new HoverEvent.ShowText(Component.literal("browser".equals(cfg.openIn) ? "Open in Todoist (browser)" : "Open in the Todoist app"))));
 	}
 
-	/** "next: 06:02 5 traps out · 12:00 Minions ready to craft" from the timed feed items (next 24 h, max 2). */
+	/** Bottom line: "next 13:55 Minions ready to craft · synced 09:54" (1 timed item in the next 24 h, never traps). */
 	private String nextTimers() {
 		long now = System.currentTimeMillis();
-		StringBuilder b = new StringBuilder();
-		int n = 0;
 		SimpleDateFormat f = new SimpleDateFormat("HH:mm");
+		String next = null;
 		for (Item it : feed) {
-			if (it.at <= now || it.at > now + 86_400_000L || "live".equals(it.kind)) continue;
-			if (n++ >= 2) break;
-			b.append(n == 1 ? "next: " : "  ·  ").append(f.format(new Date(it.at))).append(" ").append(clean(it.title));
+			if (it.at <= now || it.at > now + 86_400_000L || "live".equals(it.kind) || it.id.startsWith("timer:traps")) continue;
+			next = "next " + f.format(new Date(it.at)) + " " + clean(it.title);
+			break;
 		}
-		if (gen > 0) b.append(n == 0 ? "" : "   ").append("synced ").append(f.format(new Date(gen)));
-		return b.length() == 0 ? null : b.toString();
+		String synced = gen > 0 ? "synced " + f.format(new Date(gen)) : null;
+		if (next == null && synced == null) return null;
+		return next == null ? synced : synced == null ? next : next + "  ·  " + synced;
 	}
 
 	private void run(String tok) {

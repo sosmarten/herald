@@ -9,3 +9,5 @@ Client-only Fabric mod (Minecraft 26.2) that brings the ⛏️ SkyBlock Engine i
 - Commands (local only): `/herald` or `/herald list`, `/herald test`, `/herald reload`.
 
 It never sends anything to Hypixel on its own and never touches gameplay.
+
+HUD (1.8.0): the panel copies the look of your SkyHanni Custom Scoreboard (see-through dark box, rounded corners, padding) straight from `config/skyhanni/config.json`, so changing the scoreboard background changes Herald too. Long lines end in "…" (`hudMaxWidth` in config.json, default 190). The bottom line shows the next timer (traps left out) and the last sync time.
