@@ -128,16 +128,29 @@ public class Herald implements ClientModInitializer {
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("herald", "hud"), (g, delta) -> {
 			Minecraft mc = Minecraft.getInstance();
 			if (!cfg.hud || mc.player == null) return;
-			int y = cfg.hudY >= 0 ? cfg.hudY : (int) (mc.getWindow().getGuiScaledHeight() * 0.36);
 			List<String> gl = guide.hud();
-			for (int i = 0; i < gl.size(); i++) {
-				String t = gl.get(i);
-				g.textWithBackdrop(mc.font, Component.literal(t), cfg.hudX, y, mc.font.width(t), i == 0 ? 0xFFFFD27A : i == 1 ? 0xFFFFFFFF : 0xFFAAAAAA);
-				y += 11;
-			}
-			for (String t : watch.hud()) { g.textWithBackdrop(mc.font, Component.literal(t), cfg.hudX, y, mc.font.width(t), 0xFF7FD8FF); y += 11; }
+			List<String> wl = watch.hud();
 			String nt = nextTimers();
-			if (nt != null) g.textWithBackdrop(mc.font, Component.literal(nt), cfg.hudX, y, mc.font.width(nt), 0xFFAAAAAA);
+			if (gl.isEmpty() && wl.isEmpty() && nt == null) return;
+			// one solid dark panel with a gold edge, so every line reads on snow, lava or sky
+			List<Component> rows = new ArrayList<>();
+			List<Integer> gaps = new ArrayList<>();
+			String prog = guide.progress();
+			rows.add(Component.literal("HERALD").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
+				.append(Component.literal(prog.isEmpty() ? "" : "   " + prog).withStyle(ChatFormatting.GRAY))); gaps.add(4);
+			for (int i = 0; i < gl.size(); i++) {
+				ChatFormatting c = i == 0 ? ChatFormatting.YELLOW : i == 1 ? ChatFormatting.WHITE : ChatFormatting.GRAY;
+				rows.add(Component.literal(gl.get(i)).withStyle(c)); gaps.add(i == gl.size() - 1 ? 4 : 1);
+			}
+			for (String t : wl) { rows.add(Component.literal(t).withStyle(ChatFormatting.AQUA)); gaps.add(1); }
+			if (nt != null) { rows.add(Component.literal(nt).withStyle(ChatFormatting.GRAY)); gaps.add(1); }
+			int w = 0; for (Component r : rows) w = Math.max(w, mc.font.width(r));
+			int lh = mc.font.lineHeight, hgt = 0; for (int k = 0; k < rows.size(); k++) hgt += lh + gaps.get(k);
+			int x = cfg.hudX + 5, y = cfg.hudY >= 0 ? cfg.hudY : (int) (g.guiHeight() * 0.36);
+			g.fill(x - 5, y - 4, x + w + 5, y + hgt + 1, 0xD8101014);          // panel
+			g.fill(x - 5, y - 4, x - 3, y + hgt + 1, 0xFFFFAA00);              // gold edge
+			g.fill(x, y + lh + 1, x + w, y + lh + 2, 0x66FFAA00);              // line under the title
+			for (int k = 0; k < rows.size(); k++) { g.text(mc.font, rows.get(k), x, y, 0xFFFFFFFF, true); y += lh + gaps.get(k); }
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (!runQueue.isEmpty() && mc.player != null && mc.getConnection() != null) {

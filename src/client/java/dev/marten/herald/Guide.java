@@ -232,13 +232,22 @@ final class Guide {
 		Step s = current();
 		if (s == null) return out;
 		String prog = s.done != null && s.need > 1 ? "  " + counts.getOrDefault(s.id, 0) + "/" + s.need : "";
-		out.add(position(s) + "/" + steps.size() + "  " + s.title + prog);
+		out.add(s.title + prog);
 		out.add(h.doKey() + ": " + action(s) + "   " + h.doneKey() + ": done");
 		int i = steps.indexOf(s);
 		for (int k = i + 1; k < steps.size(); k++) {
 			if (!doneIds.contains(steps.get(k).id)) { out.add("then: " + steps.get(k).title); break; }
 		}
 		return out;
+	}
+
+	/** "■■■□□□□□ 4/22" for the HUD header, or "" when there's no plan. */
+	String progress() {
+		Step s = current();
+		if (steps.isEmpty()) return "";
+		int done = 0; for (Step x : steps) if (doneIds.contains(x.id)) done++;
+		int n = 10, f = (int) Math.round(n * (double) done / steps.size());
+		return "■".repeat(f) + "□".repeat(n - f) + "  " + (s == null ? steps.size() + "/" + steps.size() + " done" : position(s) + "/" + steps.size());
 	}
 
 	// ------------------------------------------------------------ state
