@@ -113,7 +113,7 @@ final class Guide {
 		if (steps.isEmpty() || announced || current() == null) return;
 		announced = true; saveState();
 		Herald.chatLine(Herald.prefix().append(Component.literal("Session plan").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD))
-			.append(Component.literal("  " + steps.size() + " steps · " + h.doKey() + " = do, " + h.doneKey() + " = done/skip").withStyle(ChatFormatting.GRAY)));
+			.append(Component.literal("  " + steps.size() + " steps · " + h.doKey() + " = do, " + h.doneKey() + " = skip").withStyle(ChatFormatting.GRAY)));
 		int i = 0;
 		for (Step s : steps) {
 			i++;
@@ -153,7 +153,7 @@ final class Guide {
 		long now = System.currentTimeMillis();
 		if (!s.id.equals(skipArmedId) || now - skipArmedAt > 3000) {
 			skipArmedId = s.id; skipArmedAt = now;
-			Herald.chatLine(Herald.prefix().append(Component.literal("Press " + h.doneKey() + " again to mark done: ").withStyle(ChatFormatting.GRAY))
+			Herald.chatLine(Herald.prefix().append(Component.literal("Press " + h.doneKey() + " again to skip: ").withStyle(ChatFormatting.GRAY))
 				.append(Component.literal(s.title).withStyle(ChatFormatting.WHITE)));
 			return;
 		}
@@ -233,7 +233,7 @@ final class Guide {
 		if (s == null) return out;
 		String prog = s.done != null && s.need > 1 ? "  " + counts.getOrDefault(s.id, 0) + "/" + s.need : "";
 		out.add(s.title + prog);
-		out.add(h.doKey() + ": " + action(s) + "   " + h.doneKey() + ": done");
+		out.add(h.doKey() + ": " + action(s) + "   " + h.doneKey() + ": skip");
 		int i = steps.indexOf(s);
 		for (int k = i + 1; k < steps.size(); k++) {
 			if (!doneIds.contains(steps.get(k).id)) { out.add("then: " + steps.get(k).title); break; }

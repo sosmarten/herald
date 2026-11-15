@@ -1,5 +1,5 @@
 {
   "key.herald.do": "Do the current step (warp / navigate / show)",
-  "key.herald.done": "Mark the current step done / skip it",
+  "key.herald.done": "Skip the current step (steps tick themselves when Hypixel confirms them)",
   "key.category.herald.main": "Herald"
 }
