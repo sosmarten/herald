@@ -143,17 +143,48 @@ final class Guide {
 		saveState();
 	}
 
+	private long skipArmedAt = 0; private String skipArmedId = "";
+	private final java.util.ArrayDeque<String> undoStack = new java.util.ArrayDeque<>();
+
+	/** K needs a second press within 3 s, so a stray K never skips a step. */
 	void pressDone() {
 		Step s = current();
 		if (s == null) return;
+		long now = System.currentTimeMillis();
+		if (!s.id.equals(skipArmedId) || now - skipArmedAt > 3000) {
+			skipArmedId = s.id; skipArmedAt = now;
+			Herald.chatLine(Herald.prefix().append(Component.literal("Press " + h.doneKey() + " again to mark done: ").withStyle(ChatFormatting.GRAY))
+				.append(Component.literal(s.title).withStyle(ChatFormatting.WHITE)));
+			return;
+		}
+		skipArmedId = "";
 		complete(s, true);
+	}
+
+	/** /herald undo: puts the last finished step back. */
+	void undo() {
+		String last = undoStack.pollLast();
+		if (last == null) { Herald.chatLine(Herald.prefix().append(Component.literal("nothing to undo").withStyle(ChatFormatting.GRAY))); return; }
+		doneIds.remove(last); counts.remove(last); presses.remove(last); finished = false;
+		Step s = current();
+		Herald.chatLine(Herald.prefix().append(Component.literal("Back to: ").withStyle(ChatFormatting.GRAY)).append(Component.literal(s == null ? last : s.title).withStyle(ChatFormatting.GOLD)));
+		saveState();
 	}
 
 	// ------------------------------------------------------------ chat
 
+	private static final Pattern WARP_FAIL = Pattern.compile("^(Couldn't warp you!|The water prevents you from teleporting|You can't warp|You are not allowed to warp|You haven't unlocked this fast travel destination)");
+	private static final Pattern NAV_MISS = Pattern.compile("SkyHanni Navigation Locations Matching|No locations? found", Pattern.CASE_INSENSITIVE);
+
 	void onChat(String raw) {
 		String line = plain(raw);
 		if (line.isEmpty()) return;
+		Step cur = current();
+		if (cur != null && !cur.cmds.isEmpty() && cur.cmds.get(0)[1].startsWith("/warp ") && presses.getOrDefault(cur.id, 0) > 0
+				&& (WARP_FAIL.matcher(line).find() || NAV_MISS.matcher(line).find())) {
+			presses.put(cur.id, 0); saveState();     // the warp didn't land (cooldown, water, wrong island): H warps again
+			h.toast("Not on the right island yet", h.doKey() + ": " + cur.cmds.get(0)[0]);
+		}
 		for (Step s : steps) {
 			if (doneIds.contains(s.id) || s.done == null) continue;
 			if (!s.done.matcher(line).find()) continue;
@@ -166,7 +197,7 @@ final class Guide {
 	}
 
 	private void complete(Step s, boolean byKey) {
-		doneIds.add(s.id);
+		doneIds.add(s.id); undoStack.add(s.id); if (undoStack.size() > 20) undoStack.pollFirst();
 		Step nx = current();
 		if (nx == null) {
 			if (!finished) {

@@ -8,6 +8,7 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.arguments.IntegerArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -74,7 +75,7 @@ public class Herald implements ClientModInitializer {
 		boolean toast = true, chat = true, sound = true, clipboard = true;
 		String openIn = "app";
 		boolean hud = true;                                  // session guide + counters + next timers, top left
-		int hudX = 4, hudY = 4;                               // "app" = Todoist desktop app, "browser" = web
+		int hudX = 4, hudY = -1;                             // hudY -1 = left side, a bit above the middle (clear of the top-left mod HUDs)                               // "app" = Todoist desktop app, "browser" = web
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
 	}
@@ -127,7 +128,7 @@ public class Herald implements ClientModInitializer {
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("herald", "hud"), (g, delta) -> {
 			Minecraft mc = Minecraft.getInstance();
 			if (!cfg.hud || mc.player == null) return;
-			int y = cfg.hudY;
+			int y = cfg.hudY >= 0 ? cfg.hudY : (int) (mc.getWindow().getGuiScaledHeight() * 0.36);
 			List<String> gl = guide.hud();
 			for (int i = 0; i < gl.size(); i++) {
 				String t = gl.get(i);
@@ -159,6 +160,11 @@ public class Herald implements ClientModInitializer {
 				.then(ClientCommands.literal("do").executes(c -> { guide.pressDo(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("done").executes(c -> { guide.pressDone(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("plan").executes(c -> { guide.announced = false; guide.announceIfNew(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("undo").executes(c -> { guide.undo(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("hud")
+					.then(ClientCommands.literal("reset").executes(c -> { setHud(4, -1); return Command.SINGLE_SUCCESS; }))
+					.then(ClientCommands.argument("x", IntegerArgumentType.integer(0, 4000)).then(ClientCommands.argument("y", IntegerArgumentType.integer(0, 4000))
+						.executes(c -> { setHud(IntegerArgumentType.getInteger(c, "x"), IntegerArgumentType.getInteger(c, "y")); return Command.SINGLE_SUCCESS; }))))
 				.then(ClientCommands.literal("reload").executes(c -> { feedMtime = -1; loadConfig(true); chatLine(prefix().append(Component.literal("reloaded").withStyle(ChatFormatting.GRAY))); return Command.SINGLE_SUCCESS; }))
 				.executes(c -> { list(); return Command.SINGLE_SUCCESS; })));
 		LOG.info("Herald ready: {}", feedFile);
@@ -270,6 +276,13 @@ public class Herald implements ClientModInitializer {
 			default -> SoundEvents.NOTE_BLOCK_PLING.value();
 		};
 		mc.getSoundManager().play(SimpleSoundInstance.forUI(ev, 1.0f, cfg.volume));
+	}
+
+	/** Moves the HUD and saves it in config.json (Herald keeps all other settings as they are). */
+	private void setHud(int x, int y) {
+		cfg.hudX = x; cfg.hudY = y;
+		try { Files.writeString(configFile, GSON.toJson(cfg), StandardCharsets.UTF_8); } catch (Exception e) { LOG.warn("config: {}", e.toString()); }
+		chatLine(prefix().append(Component.literal(y < 0 ? "HUD back to the left side" : "HUD moved to " + x + ", " + y).withStyle(ChatFormatting.GRAY)));
 	}
 
 	String doKey() { return doKeyMap == null ? "H" : doKeyMap.getTranslatedKeyMessage().getString(); }
