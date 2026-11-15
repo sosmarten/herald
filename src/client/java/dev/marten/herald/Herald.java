@@ -177,17 +177,19 @@ public class Herald implements ClientModInitializer {
 			int maxW = Math.max(120, cfg.hudMaxWidth);
 			List<Component> rows = new ArrayList<>();
 			List<Boolean> center = new ArrayList<>();
+			List<Integer> grp = new ArrayList<>();          // 1.8.1: blocks like his SkyHanni scoreboard, a blank gap between them
 			String prog = guide.progress();
 			rows.add(Component.literal("HERALD").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
-				.append(Component.literal(prog.isEmpty() ? "" : "  " + prog).withStyle(ChatFormatting.GRAY))); center.add(true);
+				.append(Component.literal(prog.isEmpty() ? "" : "  " + prog).withStyle(ChatFormatting.GRAY))); center.add(true); grp.add(0);
 			for (int i = 0; i < gl.size(); i++) {
 				ChatFormatting c = i == 0 ? ChatFormatting.YELLOW : i == 1 ? ChatFormatting.WHITE : ChatFormatting.GRAY;
-				rows.add(Component.literal(fit(mc, gl.get(i), maxW)).withStyle(c)); center.add(false);
+				rows.add(Component.literal(fit(mc, gl.get(i), maxW)).withStyle(c)); center.add(false); grp.add(1);
 			}
-			for (String t : wl) { rows.add(Component.literal(fit(mc, t, maxW)).withStyle(ChatFormatting.AQUA)); center.add(false); }
-			if (nt != null) { rows.add(Component.literal(fit(mc, nt, maxW)).withStyle(ChatFormatting.DARK_GRAY)); center.add(false); }
+			for (String t : wl) { rows.add(Component.literal(fit(mc, t, maxW)).withStyle(ChatFormatting.AQUA)); center.add(false); grp.add(2); }
+			if (nt != null) { rows.add(Component.literal(fit(mc, nt, maxW)).withStyle(ChatFormatting.DARK_GRAY)); center.add(false); grp.add(3); }
 			int w = 0; for (Component r : rows) w = Math.max(w, mc.font.width(r));
-			int lh = mc.font.lineHeight, gap = 2, hgt = rows.size() * lh + (rows.size() - 1) * gap;
+			int lh = mc.font.lineHeight, gap = 2, blockGap = lh / 2 + 3, hgt = rows.size() * lh;
+			for (int k = 1; k < rows.size(); k++) hgt += grp.get(k).equals(grp.get(k - 1)) ? gap : blockGap;
 			int pad = st.pad, x = cfg.hudX + pad, y = cfg.hudY >= 0 ? cfg.hudY + pad : (int) (g.guiHeight() * 0.36);
 			int x0 = x - pad, y0 = y - pad, x1 = x + w + pad, y1 = y + hgt + pad;
 			int r = Math.max(0, Math.min(st.radius, Math.min(x1 - x0, y1 - y0) / 2));
@@ -201,7 +203,7 @@ public class Herald implements ClientModInitializer {
 			for (int k = 0; k < rows.size(); k++) {
 				int rx = center.get(k) ? x + (w - mc.font.width(rows.get(k))) / 2 : x;
 				g.text(mc.font, rows.get(k), rx, y, 0xFFFFFFFF, true);
-				y += lh + gap;
+				y += lh + (k + 1 < rows.size() && !grp.get(k + 1).equals(grp.get(k)) ? blockGap : gap);
 			}
 		});
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
