@@ -1,5 +1,6 @@
 {
-  "key.herald.do": "Do the current step (warp / navigate / show)",
+  "key.herald.do": "Do the current step (warp / navigate / craft / show details)",
   "key.herald.done": "Skip the current step (steps tick themselves when Hypixel confirms them)",
+  "key.herald.info": "Show the whole current step in chat (its Todoist note too)",
   "key.category.herald.main": "Herald"
 }

@@ -11,3 +11,5 @@ Client-only Fabric mod (Minecraft 26.2) that brings the ⛏️ SkyBlock Engine i
 It never sends anything to Hypixel on its own and never touches gameplay.
 
 HUD (1.8.0): the panel copies the look of your SkyHanni Custom Scoreboard (see-through dark box, rounded corners, padding) straight from `config/skyhanni/config.json`, so changing the scoreboard background changes Herald too. Long lines end in "…" (`hudMaxWidth` in config.json, default 190). The bottom line shows the next timer (traps left out) and the last sync time.
+
+1.9.0 (17.11.2026): a step you finished or skipped stays done for 20 h, also in the next session's plan (it used to come back). The step title and what-to-do line wrap over 2–3 lines instead of being cut. New J key and `/herald info`: the whole step in chat, with its Todoist note, buttons and [Skip], so you don't have to open Todoist. Minion steps now carry a craft button for the enchanted items Supercraft has to make first.

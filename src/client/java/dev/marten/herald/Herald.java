@@ -76,7 +76,7 @@ public class Herald implements ClientModInitializer {
 		String openIn = "app";
 		boolean hud = true;                                  // session guide + counters + next timers, top left
 		int hudX = 4, hudY = -1;                             // hudY -1 = left side, a bit above the middle (clear of the top-left mod HUDs)
-		int hudMaxWidth = 190;                               // longer lines end in "…" so the panel stays narrow
+		int hudMaxWidth = 200;                               // 1.9.0: the step wraps onto more lines instead of being cut
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
 	}
@@ -118,6 +118,24 @@ public class Herald implements ClientModInitializer {
 		return l;
 	}
 
+	/** 1.9.0: word-wraps a HUD line to maxW pixels, up to maxLines lines (the last one ends in "…" only if it still doesn't fit). */
+	private static List<String> wrap(Minecraft mc, String s, int maxW, int maxLines) {
+		List<String> all = new ArrayList<>();
+		String cur = "";
+		for (String w : s.trim().split("\\s+")) {
+			String t = cur.isEmpty() ? w : cur + " " + w;
+			if (cur.isEmpty() || mc.font.width(t) <= maxW) cur = t;
+			else { all.add(cur); cur = "  " + w; }
+		}
+		if (!cur.isEmpty()) all.add(cur);
+		if (all.size() <= maxLines) { all.replaceAll(x -> fit(mc, x, maxW)); return all; }
+		List<String> out = new ArrayList<>(all.subList(0, maxLines));
+		String last = out.get(maxLines - 1) + "…";
+		while (last.length() > 2 && mc.font.width(last) > maxW) last = last.substring(0, last.length() - 2).trim() + "…";
+		out.set(maxLines - 1, last);
+		return out;
+	}
+
 	/** Cuts a HUD line to maxW pixels with "…" so one long step never makes the whole panel wide. */
 	private static String fit(Minecraft mc, String s, int maxW) {
 		if (mc.font.width(s) <= maxW) return s;
@@ -139,7 +157,7 @@ public class Herald implements ClientModInitializer {
 	private final Deque<String> runQueue = new ArrayDeque<>();
 	private Guide guide;
 	private Watch watch;
-	private KeyMapping doKeyMap, doneKeyMap;
+	private KeyMapping doKeyMap, doneKeyMap, infoKeyMap;
 	private int tokenSeq = 0;
 
 	@Override
@@ -158,6 +176,7 @@ public class Herald implements ClientModInitializer {
 		KeyMapping.Category cat = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("herald", "main"));
 		doKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.do", InputConstants.Type.KEYSYM, InputConstants.KEY_H, cat));
 		doneKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.done", InputConstants.Type.KEYSYM, InputConstants.KEY_K, cat));
+		infoKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.info", InputConstants.Type.KEYSYM, InputConstants.KEY_J, cat));
 		ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
 			if (overlay) return;
 			String txt = message.getString();
@@ -181,9 +200,11 @@ public class Herald implements ClientModInitializer {
 			String prog = guide.progress();
 			rows.add(Component.literal("HERALD").withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)
 				.append(Component.literal(prog.isEmpty() ? "" : "  " + prog).withStyle(ChatFormatting.GRAY))); center.add(true); grp.add(0);
-			for (int i = 0; i < gl.size(); i++) {
+			for (int i = 0; i < gl.size(); i++) {   // 1.9.0: [title, what to do, keys, then] → title + what-to-do wrap over 2-3 lines
+				if (gl.get(i).isEmpty()) continue;
 				ChatFormatting c = i == 0 ? ChatFormatting.YELLOW : i == 1 ? ChatFormatting.WHITE : ChatFormatting.GRAY;
-				rows.add(Component.literal(fit(mc, gl.get(i), maxW)).withStyle(c)); center.add(false); grp.add(1);
+				List<String> parts = i <= 1 ? wrap(mc, gl.get(i), maxW, i == 0 ? 2 : 3) : List.of(fit(mc, gl.get(i), maxW));
+				for (String part : parts) { rows.add(Component.literal(part).withStyle(c)); center.add(false); grp.add(1); }
 			}
 			for (String t : wl) { rows.add(Component.literal(fit(mc, t, maxW)).withStyle(ChatFormatting.AQUA)); center.add(false); grp.add(2); }
 			if (nt != null) { rows.add(Component.literal(fit(mc, nt, maxW)).withStyle(ChatFormatting.DARK_GRAY)); center.add(false); grp.add(3); }
@@ -213,6 +234,7 @@ public class Herald implements ClientModInitializer {
 			}
 			while (doKeyMap.consumeClick()) { if (mc.player != null) guide.pressDo(); }
 			while (doneKeyMap.consumeClick()) { if (mc.player != null) guide.pressDone(); }
+			while (infoKeyMap.consumeClick()) { if (mc.player != null) guide.details(); }
 			if (++tick % 20 != 0) return;                     // once a second
 			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
 		});
@@ -226,6 +248,8 @@ public class Herald implements ClientModInitializer {
 					.executes(c -> { open(StringArgumentType.getString(c, "token")); return Command.SINGLE_SUCCESS; })))
 				.then(ClientCommands.literal("do").executes(c -> { guide.pressDo(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("done").executes(c -> { guide.pressDone(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("skip").executes(c -> { guide.skipNow(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("info").executes(c -> { guide.details(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("plan").executes(c -> { guide.announced = false; guide.announceIfNew(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("undo").executes(c -> { guide.undo(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("hud")
@@ -354,6 +378,21 @@ public class Herald implements ClientModInitializer {
 
 	String doKey() { return doKeyMap == null ? "H" : doKeyMap.getTranslatedKeyMessage().getString(); }
 	String doneKey() { return doneKeyMap == null ? "K" : doneKeyMap.getTranslatedKeyMessage().getString(); }
+	String infoKey() { return infoKeyMap == null ? "J" : infoKeyMap.getTranslatedKeyMessage().getString(); }
+
+	/** 1.9.0: [Details] = the whole step in chat (its Todoist note too). */
+	MutableComponent detailsButton() {
+		return Component.literal("  [Details]").withStyle(Style.EMPTY.withColor(ChatFormatting.YELLOW)
+			.withClickEvent(new ClickEvent.RunCommand("/herald info"))
+			.withHoverEvent(new HoverEvent.ShowText(Component.literal("Show the whole step here, no Todoist needed"))));
+	}
+
+	/** 1.9.0: [Skip] in the details block. */
+	MutableComponent skipButton() {
+		return Component.literal("  [Skip]").withStyle(Style.EMPTY.withColor(ChatFormatting.GRAY)
+			.withClickEvent(new ClickEvent.RunCommand("/herald skip"))
+			.withHoverEvent(new HoverEvent.ShowText(Component.literal("Skip this step (it stays skipped for 20 h)"))));
+	}
 
 	boolean openable(String url) { return url != null && TODOIST_URL.matcher(url).matches(); }
 

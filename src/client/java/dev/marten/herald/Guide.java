@@ -34,6 +34,7 @@ final class Guide {
 	static final class Step {
 		String id = "", title = "", text = "", url = "";
 		final List<String[]> cmds = new ArrayList<>();
+		final List<String> info = new ArrayList<>();      // 1.9.0: the Todoist note as plain lines (shown in game)
 		Pattern done; int need = 1;
 	}
 
@@ -45,6 +46,9 @@ final class Guide {
 	final List<Step> steps = new ArrayList<>();
 	final Set<String> doneIds = new HashSet<>();
 	final Map<String, Integer> counts = new HashMap<>(), presses = new HashMap<>();
+	/** 1.9.0: when each step was done or skipped. A new session plan keeps those (20 h), so a skipped step doesn't come back next time. */
+	final Map<String, Long> doneAt = new HashMap<>();
+	static final long CARRY_MS = 20 * 3600_000L;
 	boolean announced = false, finished = false;
 
 	Guide(Herald h, Path dir) { this.h = h; this.stateFile = dir.resolve("guide_state.json"); loadState(); }
@@ -63,6 +67,7 @@ final class Guide {
 			Step s = new Step();
 			s.id = str(j, "id"); s.title = Herald.clean(str(j, "title")); s.text = Herald.clean(str(j, "text")); s.url = str(j, "url");
 			if (s.id.isEmpty() || s.title.isEmpty()) continue;
+			if (j.has("info") && j.get("info").isJsonArray()) for (JsonElement ie : j.getAsJsonArray("info")) { String l = Herald.clean(ie.getAsString()); if (!l.isEmpty() && s.info.size() < 10) s.info.add(l); }
 			if (j.has("cmds")) for (JsonElement ce : j.getAsJsonArray("cmds")) {
 				JsonObject co = ce.getAsJsonObject();
 				String cmd = str(co, "cmd");
@@ -87,7 +92,12 @@ final class Guide {
 			for (Step s : ns) if (!oldIds.contains(s.id)) added.add(s.title);
 		}
 		Step before = current();
-		if (!nid.equals(id)) { id = nid; doneIds.clear(); counts.clear(); presses.clear(); announced = false; finished = false; }
+		if (!nid.equals(id)) {
+			id = nid; doneIds.clear(); counts.clear(); presses.clear(); announced = false; finished = false;
+			long now = System.currentTimeMillis();
+			doneAt.entrySet().removeIf(e -> now - e.getValue() > CARRY_MS);
+			for (Step s : ns) if (doneAt.containsKey(s.id)) doneIds.add(s.id);   // done/skipped in the last 20 h: stays done
+		}
 		steps.clear(); steps.addAll(ns);
 		if (!gone.isEmpty() || !added.isEmpty()) {
 			MutableComponent line = Herald.prefix().append(Component.literal("Plan updated").withStyle(ChatFormatting.AQUA));
@@ -132,15 +142,34 @@ final class Guide {
 		if (s == null) { Herald.chatLine(Herald.prefix().append(Component.literal(steps.isEmpty() ? "no session plan right now" : "plan done for now").withStyle(ChatFormatting.GRAY))); return; }
 		int n = presses.getOrDefault(s.id, 0);
 		if (s.cmds.isEmpty()) {
-			MutableComponent line = Herald.prefix().append(Component.literal(s.title).withStyle(ChatFormatting.GOLD));
-			if (!s.text.isEmpty()) line.append(Component.literal("  " + s.text).withStyle(ChatFormatting.WHITE));
-			if (h.openable(s.url)) line.append(h.openButton(s.url));
-			Herald.chatLine(line);
+			details(s);
 		} else {
 			h.queueCmd(s.cmds.get(Math.min(n, s.cmds.size() - 1))[1]);
 		}
 		presses.put(s.id, n + 1);
 		saveState();
+	}
+
+	/** 1.9.0: the current step in chat, in full: what to do, the Todoist note, buttons. No need to open Todoist. */
+	void details() {
+		Step s = current();
+		if (s == null) { Herald.chatLine(Herald.prefix().append(Component.literal(steps.isEmpty() ? "no session plan right now" : "plan done for now").withStyle(ChatFormatting.GRAY))); return; }
+		details(s);
+	}
+
+	void details(Step s) {
+		Herald.chatLine(Herald.prefix().append(Component.literal("Step " + position(s) + "/" + steps.size() + "  ").withStyle(ChatFormatting.GRAY))
+			.append(Component.literal(s.title).withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)));
+		if (!s.text.isEmpty()) Herald.chatLine(Component.literal("   " + s.text).withStyle(ChatFormatting.WHITE));
+		for (String l : s.info) {
+			boolean head = !l.startsWith("·");
+			Herald.chatLine(Component.literal("   " + l).withStyle(head ? ChatFormatting.AQUA : ChatFormatting.GRAY));
+		}
+		MutableComponent btn = Component.literal("  ");
+		for (String[] c : s.cmds) btn.append(h.cmdButton(c[0], c[1]));
+		if (h.openable(s.url)) btn.append(h.openButton(s.url));
+		btn.append(h.skipButton());
+		Herald.chatLine(btn);
 	}
 
 	private long skipArmedAt = 0; private String skipArmedId = "";
@@ -161,11 +190,14 @@ final class Guide {
 		complete(s, true);
 	}
 
+	/** 1.9.0: the [Skip] button in chat (a click is already deliberate, so no second press). */
+	void skipNow() { Step s = current(); if (s != null) complete(s, true); }
+
 	/** /herald undo: puts the last finished step back. */
 	void undo() {
 		String last = undoStack.pollLast();
 		if (last == null) { Herald.chatLine(Herald.prefix().append(Component.literal("nothing to undo").withStyle(ChatFormatting.GRAY))); return; }
-		doneIds.remove(last); counts.remove(last); presses.remove(last); finished = false;
+		doneIds.remove(last); doneAt.remove(last); counts.remove(last); presses.remove(last); finished = false;
 		Step s = current();
 		Herald.chatLine(Herald.prefix().append(Component.literal("Back to: ").withStyle(ChatFormatting.GRAY)).append(Component.literal(s == null ? last : s.title).withStyle(ChatFormatting.GOLD)));
 		saveState();
@@ -197,7 +229,7 @@ final class Guide {
 	}
 
 	private void complete(Step s, boolean byKey) {
-		doneIds.add(s.id); undoStack.add(s.id); if (undoStack.size() > 20) undoStack.pollFirst();
+		doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); undoStack.add(s.id); if (undoStack.size() > 20) undoStack.pollFirst();
 		Step nx = current();
 		if (nx == null) {
 			if (!finished) {
@@ -214,6 +246,7 @@ final class Guide {
 				.append(Component.literal(nx.title).withStyle(ChatFormatting.GOLD));
 			if (!nx.text.isEmpty()) line.append(Component.literal("  " + nx.text).withStyle(ChatFormatting.WHITE));
 			for (String[] c : nx.cmds) line.append(h.cmdButton(c[0], c[1]));
+			if (!nx.info.isEmpty()) line.append(h.detailsButton());
 			if (h.openable(nx.url)) line.append(h.openButton(nx.url));
 			Herald.chatLine(line);
 		}
@@ -233,7 +266,8 @@ final class Guide {
 		if (s == null) return out;
 		String prog = s.done != null && s.need > 1 ? "  " + counts.getOrDefault(s.id, 0) + "/" + s.need : "";
 		out.add(s.title + prog);
-		out.add(h.doKey() + ": " + action(s) + "   " + h.doneKey() + ": skip");
+		out.add(s.text.isEmpty() ? "" : s.text);
+		out.add(h.doKey() + ": " + (s.cmds.isEmpty() ? "details" : action(s)) + "   " + h.infoKey() + ": details   " + h.doneKey() + ": skip");
 		int i = steps.indexOf(s);
 		for (int k = i + 1; k < steps.size(); k++) {
 			if (!doneIds.contains(steps.get(k).id)) { out.add("then: " + steps.get(k).title); break; }
@@ -262,6 +296,8 @@ final class Guide {
 			if (o.has("done")) for (JsonElement e : o.getAsJsonArray("done")) doneIds.add(e.getAsString());
 			if (o.has("counts")) for (String k : o.getAsJsonObject("counts").keySet()) counts.put(k, o.getAsJsonObject("counts").get(k).getAsInt());
 			if (o.has("presses")) for (String k : o.getAsJsonObject("presses").keySet()) presses.put(k, o.getAsJsonObject("presses").get(k).getAsInt());
+			if (o.has("doneAt")) for (String k : o.getAsJsonObject("doneAt").keySet()) doneAt.put(k, o.getAsJsonObject("doneAt").get(k).getAsLong());
+			else { long now = System.currentTimeMillis(); for (String d : doneIds) doneAt.put(d, now); }   // from 1.8.x: today's done steps carry over
 		} catch (Exception e) { Herald.LOG.warn("guide_state.json: {}", e.toString()); }
 	}
 
@@ -272,6 +308,7 @@ final class Guide {
 			JsonArray d = new JsonArray(); for (String x : doneIds) d.add(x); o.add("done", d);
 			JsonObject c = new JsonObject(); counts.forEach(c::addProperty); o.add("counts", c);
 			JsonObject p = new JsonObject(); presses.forEach(p::addProperty); o.add("presses", p);
+			JsonObject da = new JsonObject(); doneAt.forEach(da::addProperty); o.add("doneAt", da);
 			Files.writeString(stateFile, o.toString(), StandardCharsets.UTF_8);
 		} catch (Exception e) { Herald.LOG.warn("guide_state.json: {}", e.toString()); }
 	}
