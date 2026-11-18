@@ -251,6 +251,7 @@ final class Guide {
 	void undo() {
 		String last = undoStack.pollLast();
 		if (last == null) { Herald.chatLine(Herald.prefix().append(Component.literal("nothing to undo").withStyle(ChatFormatting.GRAY))); return; }
+		try { h.events().undo(last); } catch (Exception e) { Herald.LOG.warn("events: {}", e.toString()); }
 		doneIds.remove(last); doneAt.remove(last); doneTitle.remove(last); counts.remove(last); presses.remove(last); finished = false;
 		Step s = current();
 		Herald.chatLine(Herald.prefix().append(Component.literal("Back to: ").withStyle(ChatFormatting.GRAY)).append(Component.literal(s == null ? last : s.title).withStyle(ChatFormatting.GOLD)));
@@ -284,7 +285,16 @@ final class Guide {
 		}
 	}
 
+	/** 1.11.0: the chat lines of the last 3 min (newest last, up to 8): what happened right before he pressed K. */
+	private List<String> lastLines() {
+		List<String> out = new ArrayList<>();
+		long from = System.currentTimeMillis() - 3 * 60_000L;
+		for (Line l : recent) if (l.at >= from) out.add(l.text.length() > 200 ? l.text.substring(0, 200) : l.text);
+		return out.size() > 8 ? new ArrayList<>(out.subList(out.size() - 8, out.size())) : out;
+	}
+
 	private void complete(Step s, boolean byKey) {
+		try { h.events().step(s, byKey ? "key" : "tick", byKey ? lastLines() : null); } catch (Exception e) { Herald.LOG.warn("events: {}", e.toString()); }
 		doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); doneTitle.put(s.id, s.title); undoStack.add(s.id); if (undoStack.size() > 20) undoStack.pollFirst();
 		Step nx = current();
 		if (nx == null) {
@@ -367,7 +377,8 @@ final class Guide {
 				int c = counts.getOrDefault(s.id, 0) + 1;
 				counts.put(s.id, c);
 				l.used = true; recentDirty = true;
-				if (c >= s.need) { doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); doneTitle.put(s.id, s.title); got.add(s.title + (s.need > 1 ? " (" + c + "/" + s.need + ")" : "")); }
+				if (c >= s.need) { try { h.events().step(s, "tick", null); } catch (Exception e) { Herald.LOG.warn("events: {}", e.toString()); }
+					doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); doneTitle.put(s.id, s.title); got.add(s.title + (s.need > 1 ? " (" + c + "/" + s.need + ")" : "")); }
 				break;
 			}
 		}

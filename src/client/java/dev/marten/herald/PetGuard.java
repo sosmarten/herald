@@ -185,6 +185,7 @@ final class PetGuard {
 		boolean changed = !n.equals(pet);
 		pet = n; petLvl = lvl > 0 ? lvl : (changed ? 0 : petLvl); petSrc = src; petAt = System.currentTimeMillis();
 		if (changed) {
+			try { h.events().pet(n, petLvl, src); } catch (Exception e) { Herald.LOG.warn("events: {}", e.toString()); }
 			lastMismatch = "";
 			String want = activePlan();
 			if (want != null && !"none".equals(n) && !paused()) {
@@ -276,6 +277,7 @@ final class PetGuard {
 				return true;
 			}
 			armScreen = cs; armSlot = sl.index; armAt = now;
+			try { h.events().guard(Guide.plain(st.getHoverName().getString()), lore); } catch (Exception e) { Herald.LOG.warn("events: {}", e.toString()); }
 			String xs = xp > 0 ? String.format(Locale.ROOT, "%,d", xp) + " " + skill + " XP" : "this reward";
 			if (want != null) {
 				red("BLOCKED: " + (pet.isEmpty() ? "pet unknown" : pet + " is out") + " · need " + want,

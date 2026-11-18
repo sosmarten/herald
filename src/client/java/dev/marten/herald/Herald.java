@@ -165,6 +165,7 @@ public class Herald implements ClientModInitializer {
 	private Guide guide;
 	private Watch watch;
 	private PetGuard petGuard;
+	private Events events;
 	private KeyMapping doKeyMap, doneKeyMap, infoKeyMap;
 	private int tokenSeq = 0;
 
@@ -182,6 +183,7 @@ public class Herald implements ClientModInitializer {
 		guide = new Guide(this, dir);
 		watch = new Watch(this);
 		petGuard = new PetGuard(this);
+		events = new Events(dir);
 		ScreenEvents.BEFORE_INIT.register((client, screen, w, hh) -> {
 			if (!(screen instanceof AbstractContainerScreen<?> cs)) return;
 			ScreenMouseEvents.allowMouseClick(screen).register((s, ev) -> petGuard.allowClick(cs));
@@ -259,6 +261,7 @@ public class Herald implements ClientModInitializer {
 			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
 			try { if (mc.player != null) petGuard.tick(mc); } catch (Exception e) { LOG.warn("pet guard tick: {}", e.toString()); }
 			try { guide.tickSave(); } catch (Exception e) { LOG.warn("herald chat save: {}", e.toString()); }
+			try { if (mc.player != null) events.tick(mc); } catch (Exception e) { LOG.warn("herald events: {}", e.toString()); }
 		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
 			ClientCommands.literal("herald")
@@ -405,6 +408,7 @@ public class Herald implements ClientModInitializer {
 	}
 
 	Guide guide() { return guide; }
+	Events events() { return events; }
 	Config cfg() { return cfg; }
 
 	String doKey() { return doKeyMap == null ? "H" : doKeyMap.getTranslatedKeyMessage().getString(); }

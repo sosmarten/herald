@@ -29,3 +29,8 @@ HUD (1.8.0): the panel copies the look of your SkyHanni Custom Scoreboard (see-t
 - Pet Guard: Hypixel's repeating "21 pending Bestiary Milestones" line no longer keeps a red "need Tiger" line on the HUD while you do something else (1 min window, a reminder at most every 30 min). Rules can be per skill too (`{"pet":"Frog","pattern":"\\+[\\d,.]+ Foraging"}`): Foraging XP on another pet = one quiet heads-up every 10 min, never a block.
 - H on a step with no command shows its details once; pressing again within 20 s only shows a small toast (no more 7 copies in chat).
 - The bottom line says "! plan 47 min old" when the engine's plan hasn't refreshed for 45+ min (bridge or sync stuck).
+
+1.11.0 (18.11.2026) — Herald talks back to the engine:
+- Writes `config/herald/events.json` (last 24 h): every step ticked (chat), finished with K (with the 8 chat lines of the 3 min before, so the engine can learn which line means done), or undone; the active pet when it changes; the island from the tab list once you've stayed 3 min; any claim Pet Guard stopped (item name + lore, to match Hypixel's real wording).
+- The PC bridge (v12) forwards new entries. The engine keeps a step you ticked or skipped out of the plan for 20 h, and switches the session focus to the island you stayed on.
+- Steps can tick themselves from the ⚙️ Actions "done" column (a chat regex, optional " ×N" count).
