@@ -16,6 +16,9 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
+import net.fabricmc.fabric.api.client.screen.v1.ScreenMouseEvents;
+import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.resources.Identifier;
@@ -79,6 +82,8 @@ public class Herald implements ClientModInitializer {
 		int hudMaxWidth = 200;                               // 1.9.0: the step wraps onto more lines instead of being cut
 		float volume = 1.0f;
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
+		boolean petGuard = true;                             // 1.10.0: Pet Guard (wrong-pet XP claims are stopped)
+		long petGuardMinXp = 250_000;                        // claims this big ask once per menu even without a pet plan
 	}
 
 	static class Item {
@@ -145,7 +150,7 @@ public class Herald implements ClientModInitializer {
 	}
 
 	/** Only these game commands can ever be run from a button (the engine feed is the only source). */
-	static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is|pickupstash)( [A-Za-z0-9 '_\\-]{1,60})?$");
+	static final java.util.regex.Pattern CMD_OK = java.util.regex.Pattern.compile("^/(warp|shnavigate|recipe|hub|is|pickupstash|pets)( [A-Za-z0-9 '_\\-]{1,60})?$");
 	private final Map<String, String> tokens = new java.util.LinkedHashMap<>() {
 		@Override protected boolean removeEldestEntry(Map.Entry<String, String> e) { return size() > 300; }
 	};
@@ -157,6 +162,7 @@ public class Herald implements ClientModInitializer {
 	private final Deque<String> runQueue = new ArrayDeque<>();
 	private Guide guide;
 	private Watch watch;
+	private PetGuard petGuard;
 	private KeyMapping doKeyMap, doneKeyMap, infoKeyMap;
 	private int tokenSeq = 0;
 
@@ -173,16 +179,26 @@ public class Herald implements ClientModInitializer {
 		loadShown();
 		guide = new Guide(this, dir);
 		watch = new Watch(this);
+		petGuard = new PetGuard(this);
+		ScreenEvents.BEFORE_INIT.register((client, screen, w, hh) -> {
+			if (!(screen instanceof AbstractContainerScreen<?> cs)) return;
+			ScreenMouseEvents.allowMouseClick(screen).register((s, ev) -> petGuard.allowClick(cs));
+			ScreenEvents.remove(screen).register(petGuard::onClose);
+		});
+		ScreenEvents.AFTER_INIT.register((client, screen, w, hh) -> {
+			try { petGuard.onOpen(screen); } catch (Exception e) { LOG.warn("pet guard open: {}", e.toString()); }
+		});
 		KeyMapping.Category cat = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("herald", "main"));
 		doKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.do", InputConstants.Type.KEYSYM, InputConstants.KEY_H, cat));
 		doneKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.done", InputConstants.Type.KEYSYM, InputConstants.KEY_K, cat));
 		infoKeyMap = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.herald.info", InputConstants.Type.KEYSYM, InputConstants.KEY_J, cat));
 		ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-			if (overlay) return;
 			String txt = message.getString();
+			if (overlay) { try { petGuard.onOverlay(txt); } catch (Exception e) { LOG.warn("pet guard: {}", e.toString()); } return; }
 			if (txt.startsWith("[Herald]")) return;
 			try { guide.onChat(txt); } catch (Exception e) { LOG.warn("herald guide: {}", e.toString()); }
 			try { watch.onChat(txt); } catch (Exception e) { LOG.warn("herald watch: {}", e.toString()); }
+			try { petGuard.onChat(txt); } catch (Exception e) { LOG.warn("pet guard: {}", e.toString()); }
 		});
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("herald", "hud"), (g, delta) -> {
 			Minecraft mc = Minecraft.getInstance();
@@ -190,7 +206,8 @@ public class Herald implements ClientModInitializer {
 			List<String> gl = guide.hud();
 			List<String> wl = watch.hud();
 			String nt = nextTimers();
-			if (gl.isEmpty() && wl.isEmpty() && nt == null) return;
+			Component pl = petGuard.hudLine();
+			if (gl.isEmpty() && wl.isEmpty() && nt == null && pl == null) return;
 			// 1.8.0: same look as his SkyHanni scoreboard (see Style): see-through rounded box, centered gold title, compact rows
 			Look st = look();
 			int maxW = Math.max(120, cfg.hudMaxWidth);
@@ -206,6 +223,7 @@ public class Herald implements ClientModInitializer {
 				List<String> parts = i <= 1 ? wrap(mc, gl.get(i), maxW, i == 0 ? 2 : 3) : List.of(fit(mc, gl.get(i), maxW));
 				for (String part : parts) { rows.add(Component.literal(part).withStyle(c)); center.add(false); grp.add(1); }
 			}
+			if (pl != null) { rows.add(pl); center.add(false); grp.add(1); }   // 1.10.0: right under the step
 			for (String t : wl) { rows.add(Component.literal(fit(mc, t, maxW)).withStyle(ChatFormatting.AQUA)); center.add(false); grp.add(2); }
 			if (nt != null) { rows.add(Component.literal(fit(mc, nt, maxW)).withStyle(ChatFormatting.DARK_GRAY)); center.add(false); grp.add(3); }
 			int w = 0; for (Component r : rows) w = Math.max(w, mc.font.width(r));
@@ -237,6 +255,7 @@ public class Herald implements ClientModInitializer {
 			while (infoKeyMap.consumeClick()) { if (mc.player != null) guide.details(); }
 			if (++tick % 20 != 0) return;                     // once a second
 			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
+			try { if (mc.player != null) petGuard.tick(mc); } catch (Exception e) { LOG.warn("pet guard tick: {}", e.toString()); }
 		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
 			ClientCommands.literal("herald")
@@ -251,6 +270,12 @@ public class Herald implements ClientModInitializer {
 				.then(ClientCommands.literal("skip").executes(c -> { guide.skipNow(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("info").executes(c -> { guide.details(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("plan").executes(c -> { guide.announced = false; guide.announceIfNew(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("pet").executes(c -> { petGuard.status(); return Command.SINGLE_SUCCESS; }))
+				.then(ClientCommands.literal("guard")
+					.then(ClientCommands.literal("on").executes(c -> { petGuard.pause(0); return Command.SINGLE_SUCCESS; }))
+					.then(ClientCommands.literal("pause").then(ClientCommands.argument("min", IntegerArgumentType.integer(1, 120))
+						.executes(c -> { petGuard.pause(IntegerArgumentType.getInteger(c, "min")); return Command.SINGLE_SUCCESS; })))
+					.executes(c -> { petGuard.status(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("undo").executes(c -> { guide.undo(); return Command.SINGLE_SUCCESS; }))
 				.then(ClientCommands.literal("hud")
 					.then(ClientCommands.literal("reset").executes(c -> { setHud(4, -1); return Command.SINGLE_SUCCESS; }))
@@ -376,6 +401,9 @@ public class Herald implements ClientModInitializer {
 		chatLine(prefix().append(Component.literal(y < 0 ? "HUD back to the left side" : "HUD moved to " + x + ", " + y).withStyle(ChatFormatting.GRAY)));
 	}
 
+	Guide guide() { return guide; }
+	Config cfg() { return cfg; }
+
 	String doKey() { return doKeyMap == null ? "H" : doKeyMap.getTranslatedKeyMessage().getString(); }
 	String doneKey() { return doneKeyMap == null ? "K" : doneKeyMap.getTranslatedKeyMessage().getString(); }
 	String infoKey() { return infoKeyMap == null ? "J" : infoKeyMap.getTranslatedKeyMessage().getString(); }
@@ -499,6 +527,7 @@ public class Herald implements ClientModInitializer {
 			feed.clear(); feed.addAll(next);
 			guide.update(o.has("guide") && o.get("guide").isJsonObject() ? o.getAsJsonObject("guide") : null);
 			watch.update(o);
+			petGuard.update(o);
 		} catch (Exception e) { LOG.warn("feed.json: {}", e.toString()); }
 	}
 

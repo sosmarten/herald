@@ -47,6 +47,7 @@ final class Watch {
 		}
 		if (feed.has("alerts") && feed.get("alerts").isJsonArray()) for (JsonElement e : feed.getAsJsonArray("alerts")) {
 			JsonObject j = e.getAsJsonObject();
+			if (!Guide.str(j, "pet").isEmpty()) continue;           // 1.10.0: pet rules belong to the Pet Guard (it only speaks up on the wrong pet)
 			Pattern p = compile(Guide.str(j, "pattern"));
 			if (p == null) continue;
 			Alert a = new Alert();

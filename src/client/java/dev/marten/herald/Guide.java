@@ -33,6 +33,7 @@ import java.util.regex.PatternSyntaxException;
 final class Guide {
 	static final class Step {
 		String id = "", title = "", text = "", url = "";
+		String pet = "";                                   // 1.10.0: the pet this step needs ("pet" key or "Pet: Tiger" in its text)
 		final List<String[]> cmds = new ArrayList<>();
 		final List<String> info = new ArrayList<>();      // 1.9.0: the Todoist note as plain lines (shown in game)
 		Pattern done; int need = 1;
@@ -67,6 +68,7 @@ final class Guide {
 			Step s = new Step();
 			s.id = str(j, "id"); s.title = Herald.clean(str(j, "title")); s.text = Herald.clean(str(j, "text")); s.url = str(j, "url");
 			if (s.id.isEmpty() || s.title.isEmpty()) continue;
+			s.pet = PetGuard.stepPet(j);
 			if (j.has("info") && j.get("info").isJsonArray()) for (JsonElement ie : j.getAsJsonArray("info")) { String l = Herald.clean(ie.getAsString()); if (!l.isEmpty() && s.info.size() < 10) s.info.add(l); }
 			if (j.has("cmds")) for (JsonElement ce : j.getAsJsonArray("cmds")) {
 				JsonObject co = ce.getAsJsonObject();

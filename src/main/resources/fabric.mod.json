@@ -3,7 +3,7 @@
 	"id": "herald",
 	"version": "${version}",
 	"name": "Herald",
-	"description": "Herald brings the SkyBlock Engine into the game: timers, crafts, contests and milestones as a toast, a chat line with buttons, and a sound. Client-only: reads a local file written by the SkyBlock Engine bridge; buttons run only /warp, /shnavigate, /recipe, /hub and /is, and only when you click them.",
+	"description": "Herald brings the SkyBlock Engine into the game: timers, crafts, contests and milestones as a toast, a chat line with buttons, and a sound. Client-only: reads a local file written by the SkyBlock Engine bridge; buttons run only /warp, /shnavigate, /recipe, /hub, /is, /pickupstash and /pets, and only when you click them. Pet Guard cancels your own click on an XP reward when the wrong pet is out.",
 	"authors": ["Marten"],
 	"license": "MIT",
 	"environment": "client",
