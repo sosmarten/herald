@@ -84,6 +84,7 @@ public class Herald implements ClientModInitializer {
 		Map<String, Boolean> kinds = new HashMap<>();        // e.g. "minions": false turns minion pings off
 		boolean petGuard = true;                             // 1.10.0: Pet Guard (wrong-pet XP claims are stopped)
 		long petGuardMinXp = 250_000;                        // claims this big ask once per menu even without a pet plan
+		int replayMin = 90;                                  // 1.10.0: chat lines this recent still finish a step that shows up later
 	}
 
 	static class Item {
@@ -256,6 +257,7 @@ public class Herald implements ClientModInitializer {
 			if (++tick % 20 != 0) return;                     // once a second
 			try { step(mc); } catch (Exception e) { LOG.warn("herald: {}", e.toString()); }
 			try { if (mc.player != null) petGuard.tick(mc); } catch (Exception e) { LOG.warn("pet guard tick: {}", e.toString()); }
+			try { guide.tickSave(); } catch (Exception e) { LOG.warn("herald chat save: {}", e.toString()); }
 		});
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
 			ClientCommands.literal("herald")

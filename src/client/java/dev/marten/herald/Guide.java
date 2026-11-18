@@ -52,7 +52,22 @@ final class Guide {
 	static final long CARRY_MS = 20 * 3600_000L;
 	boolean announced = false, finished = false;
 
-	Guide(Herald h, Path dir) { this.h = h; this.stateFile = dir.resolve("guide_state.json"); loadState(); }
+	/**
+	 * 1.10.0: recent chat, kept on disk (chat_recent.json, last few hours), so a step whose line came BEFORE the step
+	 * existed (traps collected before the session plan arrived, or before a game restart) still counts.
+	 * A line counts for one step only, ever ("used"), so nothing is counted twice.
+	 */
+	static final class Line { long at; String text; boolean used; Line(long at, String text, boolean used) { this.at = at; this.text = text; this.used = used; } }
+	private final java.util.ArrayDeque<Line> recent = new java.util.ArrayDeque<>();
+	private final Path recentFile;
+	private boolean recentDirty = false;
+	private long recentSaved = 0;
+	private final Set<String> replayed = new HashSet<>();   // step ids already checked against recent chat in this plan
+
+	Guide(Herald h, Path dir) {
+		this.h = h; this.stateFile = dir.resolve("guide_state.json"); this.recentFile = dir.resolve("chat_recent.json");
+		loadState(); loadRecent();
+	}
 
 	static String plain(String raw) { return FORMAT.matcher(raw == null ? "" : raw).replaceAll("").trim(); }
 
@@ -95,12 +110,13 @@ final class Guide {
 		}
 		Step before = current();
 		if (!nid.equals(id)) {
-			id = nid; doneIds.clear(); counts.clear(); presses.clear(); announced = false; finished = false;
+			id = nid; doneIds.clear(); counts.clear(); presses.clear(); announced = false; finished = false; replayed.clear();
 			long now = System.currentTimeMillis();
 			doneAt.entrySet().removeIf(e -> now - e.getValue() > CARRY_MS);
 			for (Step s : ns) if (doneAt.containsKey(s.id)) doneIds.add(s.id);   // done/skipped in the last 20 h: stays done
 		}
 		steps.clear(); steps.addAll(ns);
+		replay();
 		if (!gone.isEmpty() || !added.isEmpty()) {
 			MutableComponent line = Herald.prefix().append(Component.literal("Plan updated").withStyle(ChatFormatting.AQUA));
 			if (!gone.isEmpty()) line.append(Component.literal("  done: " + String.join(", ", gone.subList(0, Math.min(3, gone.size()))) + (gone.size() > 3 ? " +" + (gone.size() - 3) : "")).withStyle(ChatFormatting.GREEN));
@@ -213,6 +229,7 @@ final class Guide {
 	void onChat(String raw) {
 		String line = plain(raw);
 		if (line.isEmpty()) return;
+		Line rec = remember(line);
 		Step cur = current();
 		if (cur != null && !cur.cmds.isEmpty() && cur.cmds.get(0)[1].startsWith("/warp ") && presses.getOrDefault(cur.id, 0) > 0
 				&& (WARP_FAIL.matcher(line).find() || NAV_MISS.matcher(line).find())) {
@@ -224,6 +241,7 @@ final class Guide {
 			if (!s.done.matcher(line).find()) continue;
 			int c = counts.getOrDefault(s.id, 0) + 1;
 			counts.put(s.id, c);
+			rec.used = true; recentDirty = true;
 			if (c >= s.need) complete(s, false);
 			else { h.ping("pling"); saveState(); }
 			return;                        // one line = one step
@@ -284,6 +302,82 @@ final class Guide {
 		int done = 0; for (Step x : steps) if (doneIds.contains(x.id)) done++;
 		int n = 10, f = (int) Math.round(n * (double) done / steps.size());
 		return "■".repeat(f) + "□".repeat(n - f) + "  " + (s == null ? steps.size() + "/" + steps.size() + " done" : position(s) + "/" + steps.size());
+	}
+
+	// ------------------------------------------------------------ 1.10.0 chat replay
+
+	private Line remember(String line) {
+		Line l = new Line(System.currentTimeMillis(), line, false);
+		recent.addLast(l);
+		while (recent.size() > 800) recent.pollFirst();
+		recentDirty = true;
+		return l;
+	}
+
+	/** New steps with a done-pattern: count matching lines from the last replayMin minutes that no step has used yet. */
+	private void replay() {
+		List<Step> todo = new ArrayList<>();
+		for (Step s : steps) {
+			if (s.done == null || doneIds.contains(s.id) || replayed.contains(s.id)) continue;
+			replayed.add(s.id); todo.add(s);
+		}
+		if (todo.isEmpty() || recent.isEmpty()) return;
+		long from = System.currentTimeMillis() - Math.max(5, h.cfg().replayMin) * 60_000L;
+		List<String> got = new ArrayList<>();
+		for (Line l : recent) {
+			if (l.used || l.at < from) continue;
+			for (Step s : todo) {                                 // same rule as live: first open step whose pattern matches
+				if (doneIds.contains(s.id) || !s.done.matcher(l.text).find()) continue;
+				int c = counts.getOrDefault(s.id, 0) + 1;
+				counts.put(s.id, c);
+				l.used = true; recentDirty = true;
+				if (c >= s.need) { doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); got.add(s.title + (s.need > 1 ? " (" + c + "/" + s.need + ")" : "")); }
+				break;
+			}
+		}
+		boolean partial = false;
+		for (Step s : todo) if (!doneIds.contains(s.id) && counts.getOrDefault(s.id, 0) > 0) partial = true;
+		if (got.isEmpty() && !partial) return;
+		MutableComponent line = Herald.prefix().append(Component.literal("Already done before the plan came in").withStyle(ChatFormatting.AQUA));
+		if (!got.isEmpty()) line.append(Component.literal("  " + String.join(", ", got.subList(0, Math.min(4, got.size()))) + (got.size() > 4 ? " +" + (got.size() - 4) : "")).withStyle(ChatFormatting.GREEN));
+		for (Step s : todo) if (!doneIds.contains(s.id) && counts.getOrDefault(s.id, 0) > 0)
+			line.append(Component.literal("  " + s.title + " " + counts.get(s.id) + "/" + s.need).withStyle(ChatFormatting.YELLOW));
+		Herald.chatLine(line);
+		if (current() == null && !steps.isEmpty()) finished = true;
+		saveRecent(true);
+	}
+
+	/** Called once a second by Herald: writes chat_recent.json at most every 30 s. */
+	void tickSave() { saveRecent(false); }
+
+	private void loadRecent() {
+		try {
+			if (!Files.exists(recentFile)) return;
+			long from = System.currentTimeMillis() - 6 * 3600_000L;
+			for (JsonElement e : JsonParser.parseString(Files.readString(recentFile, StandardCharsets.UTF_8)).getAsJsonArray()) {
+				JsonObject o = e.getAsJsonObject();
+				long at = o.get("at").getAsLong();
+				if (at >= from) recent.addLast(new Line(at, str(o, "t"), o.has("u") && o.get("u").getAsBoolean()));
+			}
+		} catch (Exception e) { Herald.LOG.warn("chat_recent.json: {}", e.toString()); }
+	}
+
+	private void saveRecent(boolean force) {
+		long now = System.currentTimeMillis();
+		if (!recentDirty || (!force && now - recentSaved < 30_000)) return;
+		recentSaved = now; recentDirty = false;
+		try {
+			long from = now - 6 * 3600_000L;
+			JsonArray a = new JsonArray();
+			for (Line l : recent) {
+				if (l.at < from) continue;
+				JsonObject o = new JsonObject(); o.addProperty("at", l.at); o.addProperty("t", l.text); if (l.used) o.addProperty("u", true);
+				a.add(o);
+			}
+			Path tmp = recentFile.resolveSibling("chat_recent.json.tmp");
+			Files.writeString(tmp, a.toString(), StandardCharsets.UTF_8);
+			Files.move(tmp, recentFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+		} catch (Exception e) { Herald.LOG.warn("chat_recent.json write: {}", e.toString()); }
 	}
 
 	// ------------------------------------------------------------ state
