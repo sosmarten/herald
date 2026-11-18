@@ -69,6 +69,23 @@ final class Guide {
 		loadState(); loadRecent();
 	}
 
+	/**
+	 * 1.10.0: extra "done" lines per step id prefix, OR'ed with the engine's pattern. 18.11 his traps were collected with
+	 * "You caught a Mossybit Shard!" ×5 (Hunting Toolkit → collect), but the engine only listened for
+	 * "…Huntrap and it got sent to your Hunting Toolkit", so the step never ticked. config.json "extraDone" adds/overrides.
+	 */
+	static final Map<String, String> EXTRA_DONE = Map.of(
+		"trap:collect", "^You caught an? .+? Shard!"
+	);
+
+	private String extraDone(String stepId) {
+		Map<String, String> cfgX = h.cfg().extraDone;
+		String best = "";
+		for (Map<String, String> m : java.util.Arrays.asList(EXTRA_DONE, cfgX == null ? Map.<String, String>of() : cfgX))
+			for (Map.Entry<String, String> e : m.entrySet()) if (stepId.startsWith(e.getKey())) best = e.getValue();
+		return best;
+	}
+
 	static String plain(String raw) { return FORMAT.matcher(raw == null ? "" : raw).replaceAll("").trim(); }
 
 	// ------------------------------------------------------------ feed
@@ -93,7 +110,9 @@ final class Guide {
 			if (j.has("done") && j.get("done").isJsonObject()) {
 				JsonObject d = j.getAsJsonObject("done");
 				String p = str(d, "pattern");
-				if (!p.isEmpty() && p.length() < 300) {
+				String extra = extraDone(s.id);                 // 1.10.0: the lines Hypixel really sends (see EXTRA_DONE)
+				if (!extra.isEmpty()) p = p.isEmpty() ? extra : "(?:" + p + ")|(?:" + extra + ")";
+				if (!p.isEmpty() && p.length() < 600) {
 					try { s.done = Pattern.compile(p); } catch (PatternSyntaxException x) { Herald.LOG.warn("guide pattern: {}", p); }
 				}
 				s.need = Math.max(1, d.has("count") ? d.get("count").getAsInt() : 1);
