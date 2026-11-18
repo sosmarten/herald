@@ -49,6 +49,8 @@ final class Guide {
 	final Map<String, Integer> counts = new HashMap<>(), presses = new HashMap<>();
 	/** 1.9.0: when each step was done or skipped. A new session plan keeps those (20 h), so a skipped step doesn't come back next time. */
 	final Map<String, Long> doneAt = new HashMap<>();
+	/** 1.10.0: the step's title when it was done; if the engine rewrites the step (recalibrated plan), it comes back. */
+	final Map<String, String> doneTitle = new HashMap<>();
 	static final long CARRY_MS = 20 * 3600_000L;
 	boolean announced = false, finished = false;
 
@@ -133,6 +135,13 @@ final class Guide {
 			long now = System.currentTimeMillis();
 			doneAt.entrySet().removeIf(e -> now - e.getValue() > CARRY_MS);
 			for (Step s : ns) if (doneAt.containsKey(s.id)) doneIds.add(s.id);   // done/skipped in the last 20 h: stays done
+		}
+		for (Step s : ns) {
+			String was = doneTitle.get(s.id);
+			if (doneIds.contains(s.id) && was != null && !was.equals(s.title)) {
+				doneIds.remove(s.id); doneAt.remove(s.id); doneTitle.remove(s.id); counts.remove(s.id); presses.remove(s.id); replayed.remove(s.id);
+				added.add(s.title + " (changed)");
+			}
 		}
 		steps.clear(); steps.addAll(ns);
 		replay();
@@ -234,7 +243,7 @@ final class Guide {
 	void undo() {
 		String last = undoStack.pollLast();
 		if (last == null) { Herald.chatLine(Herald.prefix().append(Component.literal("nothing to undo").withStyle(ChatFormatting.GRAY))); return; }
-		doneIds.remove(last); doneAt.remove(last); counts.remove(last); presses.remove(last); finished = false;
+		doneIds.remove(last); doneAt.remove(last); doneTitle.remove(last); counts.remove(last); presses.remove(last); finished = false;
 		Step s = current();
 		Herald.chatLine(Herald.prefix().append(Component.literal("Back to: ").withStyle(ChatFormatting.GRAY)).append(Component.literal(s == null ? last : s.title).withStyle(ChatFormatting.GOLD)));
 		saveState();
@@ -268,7 +277,7 @@ final class Guide {
 	}
 
 	private void complete(Step s, boolean byKey) {
-		doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); undoStack.add(s.id); if (undoStack.size() > 20) undoStack.pollFirst();
+		doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); doneTitle.put(s.id, s.title); undoStack.add(s.id); if (undoStack.size() > 20) undoStack.pollFirst();
 		Step nx = current();
 		if (nx == null) {
 			if (!finished) {
@@ -350,7 +359,7 @@ final class Guide {
 				int c = counts.getOrDefault(s.id, 0) + 1;
 				counts.put(s.id, c);
 				l.used = true; recentDirty = true;
-				if (c >= s.need) { doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); got.add(s.title + (s.need > 1 ? " (" + c + "/" + s.need + ")" : "")); }
+				if (c >= s.need) { doneIds.add(s.id); doneAt.put(s.id, System.currentTimeMillis()); doneTitle.put(s.id, s.title); got.add(s.title + (s.need > 1 ? " (" + c + "/" + s.need + ")" : "")); }
 				break;
 			}
 		}
@@ -411,6 +420,7 @@ final class Guide {
 			if (o.has("done")) for (JsonElement e : o.getAsJsonArray("done")) doneIds.add(e.getAsString());
 			if (o.has("counts")) for (String k : o.getAsJsonObject("counts").keySet()) counts.put(k, o.getAsJsonObject("counts").get(k).getAsInt());
 			if (o.has("presses")) for (String k : o.getAsJsonObject("presses").keySet()) presses.put(k, o.getAsJsonObject("presses").get(k).getAsInt());
+			if (o.has("doneTitle")) for (String k : o.getAsJsonObject("doneTitle").keySet()) doneTitle.put(k, o.getAsJsonObject("doneTitle").get(k).getAsString());
 			if (o.has("doneAt")) for (String k : o.getAsJsonObject("doneAt").keySet()) doneAt.put(k, o.getAsJsonObject("doneAt").get(k).getAsLong());
 			else { long now = System.currentTimeMillis(); for (String d : doneIds) doneAt.put(d, now); }   // from 1.8.x: today's done steps carry over
 		} catch (Exception e) { Herald.LOG.warn("guide_state.json: {}", e.toString()); }
@@ -424,6 +434,8 @@ final class Guide {
 			JsonObject c = new JsonObject(); counts.forEach(c::addProperty); o.add("counts", c);
 			JsonObject p = new JsonObject(); presses.forEach(p::addProperty); o.add("presses", p);
 			JsonObject da = new JsonObject(); doneAt.forEach(da::addProperty); o.add("doneAt", da);
+			doneTitle.keySet().retainAll(doneAt.keySet());
+			JsonObject dt = new JsonObject(); doneTitle.forEach(dt::addProperty); o.add("doneTitle", dt);
 			Files.writeString(stateFile, o.toString(), StandardCharsets.UTF_8);
 		} catch (Exception e) { Herald.LOG.warn("guide_state.json: {}", e.toString()); }
 	}
