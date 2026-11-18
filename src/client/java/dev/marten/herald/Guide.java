@@ -188,7 +188,12 @@ final class Guide {
 		if (s == null) { Herald.chatLine(Herald.prefix().append(Component.literal(steps.isEmpty() ? "no session plan right now" : "plan done for now").withStyle(ChatFormatting.GRAY))); return; }
 		int n = presses.getOrDefault(s.id, 0);
 		if (s.cmds.isEmpty()) {
-			details(s);
+			// 1.10.1: pressing H again on a "just do it" step doesn't flood chat with the same block (18.11: 7× on the trap step)
+			long now = System.currentTimeMillis();
+			if (s.id.equals(lastDetailsId) && now - lastDetailsAt < 20_000) {
+				String prog = s.done != null && s.need > 1 ? " " + counts.getOrDefault(s.id, 0) + "/" + s.need : "";
+				h.toast(s.title + prog, s.done != null ? "ticks itself when it's done · " + h.doneKey() + " twice = skip" : h.doneKey() + " twice when done");
+			} else details(s);
 		} else {
 			h.queueCmd(s.cmds.get(Math.min(n, s.cmds.size() - 1))[1]);
 		}
@@ -203,7 +208,10 @@ final class Guide {
 		details(s);
 	}
 
+	private String lastDetailsId = ""; private long lastDetailsAt = 0;
+
 	void details(Step s) {
+		lastDetailsId = s.id; lastDetailsAt = System.currentTimeMillis();
 		Herald.chatLine(Herald.prefix().append(Component.literal("Step " + position(s) + "/" + steps.size() + "  ").withStyle(ChatFormatting.GRAY))
 			.append(Component.literal(s.title).withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD)));
 		if (!s.text.isEmpty()) Herald.chatLine(Component.literal("   " + s.text).withStyle(ChatFormatting.WHITE));

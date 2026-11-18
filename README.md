@@ -24,3 +24,8 @@ HUD (1.8.0): the panel copies the look of your SkyHanni Custom Scoreboard (see-t
 - "Collect all 5 traps" also finishes on Hypixel's real collect lines ("You caught a Mossybit Shard!" ×5 from the Hunting Toolkit); the engine only listened for "…Huntrap and it got sent to your Hunting Toolkit". `extraDone` in config.json adds more (step id prefix → regex).
 - The pet HUD line and "wrong pet" toasts only show while a pet step is on, a guarded menu is open, or the plan's chat line (e.g. "You have 21 pending Bestiary Milestones") came in the last 5 min, so other activities never nag.
 - A done/skipped step whose text the engine changes (a recalibrated plan) comes back instead of staying done for 20 h (`doneTitle` in guide_state.json).
+
+1.10.1 (18.11.2026):
+- Pet Guard: Hypixel's repeating "21 pending Bestiary Milestones" line no longer keeps a red "need Tiger" line on the HUD while you do something else (1 min window, a reminder at most every 30 min). Rules can be per skill too (`{"pet":"Frog","pattern":"\\+[\\d,.]+ Foraging"}`): Foraging XP on another pet = one quiet heads-up every 10 min, never a block.
+- H on a step with no command shows its details once; pressing again within 20 s only shows a small toast (no more 7 copies in chat).
+- The bottom line says "! plan 47 min old" when the engine's plan hasn't refreshed for 45+ min (bridge or sync stuck).

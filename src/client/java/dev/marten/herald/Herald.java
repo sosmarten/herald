@@ -445,7 +445,9 @@ public class Herald implements ClientModInitializer {
 			next = "next " + f.format(new Date(it.at)) + " " + clean(it.title);
 			break;
 		}
-		String synced = gen > 0 ? "synced " + f.format(new Date(gen)) : null;
+		// 1.10.1: say it when the plan is old while he plays (bridge or laptop sync stuck), instead of a quiet time
+		long age = gen > 0 ? now - gen : 0;
+		String synced = gen <= 0 ? null : age > 45 * 60_000L ? "! plan " + (age / 60_000L) + " min old" : "synced " + f.format(new Date(gen));
 		if (next == null && synced == null) return null;
 		return next == null ? synced : synced == null ? next : next + "  ·  " + synced;
 	}

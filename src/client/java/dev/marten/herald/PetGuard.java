@@ -43,7 +43,7 @@ import java.util.regex.PatternSyntaxException;
  * Client-only: it only reads what the game shows and cancels his own click; it never clicks, moves or sends anything.
  */
 final class PetGuard {
-	static final class Rule { String id = "", pet = "", title = "", text = ""; Pattern gui, chat; long seenAt = 0; }
+	static final class Rule { String id = "", pet = "", title = "", text = ""; Pattern gui, chat; long seenAt = 0, nagAt = 0; }
 
 	private static final Pattern SUMMON = Pattern.compile("^You summoned your (?:\\[Lvl (\\d+)\\] )?(.+?)!?$");
 	private static final Pattern AUTOPET = Pattern.compile("^Autopet equipped your \\[Lvl (\\d+)\\] (.+?)!");
@@ -74,8 +74,8 @@ final class PetGuard {
 	// ------------------------------------------------------------ plan from the feed
 
 	void update(JsonObject feed) {
-		java.util.Map<String, Long> seen = new java.util.HashMap<>();
-		for (Rule r : rules) seen.put(r.id, r.seenAt);
+		java.util.Map<String, Long> seen = new java.util.HashMap<>(), nag = new java.util.HashMap<>();
+		for (Rule r : rules) { seen.put(r.id, r.seenAt); nag.put(r.id, r.nagAt); }
 		rules.clear();
 		if (feed == null || !feed.has("alerts") || !feed.get("alerts").isJsonArray()) return;
 		for (JsonElement e : feed.getAsJsonArray("alerts")) {
@@ -87,7 +87,7 @@ final class PetGuard {
 			r.id = Guide.str(j, "id"); r.pet = Herald.clean(p).trim();
 			r.title = Guide.str(j, "title"); r.text = Guide.str(j, "text");
 			r.gui = compile(Guide.str(j, "gui")); r.chat = compile(Guide.str(j, "pattern"));
-			r.seenAt = seen.getOrDefault(r.id, 0L);
+			r.seenAt = seen.getOrDefault(r.id, 0L); r.nagAt = nag.getOrDefault(r.id, 0L);
 			rules.add(r);
 		}
 	}
@@ -140,7 +140,7 @@ final class PetGuard {
 		long now = System.currentTimeMillis();
 		for (Rule r : rules) {
 			if (title != null && r.gui != null && r.gui.matcher(title).find()) return r.pet;
-			if (now - r.seenAt < 5 * 60_000L) return r.pet;
+			if (now - r.seenAt < 60_000L) return r.pet;        // 1.10.1: 1 min (Hypixel repeats "21 pending Bestiary Milestones" every few min)
 		}
 		return null;
 	}
@@ -163,11 +163,15 @@ final class PetGuard {
 		if (m.find()) { setPet(m.group(2), parse(m.group(1)), "autopet"); }
 		else if ((m = SUMMON.matcher(line)).find()) { setPet(m.group(2), parse(m.group(1)), "summon"); }
 		else if ((m = DESPAWN.matcher(line)).find()) { setPet("none", 0, "despawn"); }
-		boolean fresh = false;
-		for (Rule r : rules) if (r.chat != null && r.chat.matcher(line).find()) { fresh |= System.currentTimeMillis() - r.seenAt > 5 * 60_000L; r.seenAt = System.currentTimeMillis(); }
-		if (fresh && !paused()) {           // e.g. the pending-Bestiary line on join: say right away whether the right pet is out
-			String want = activePlan();
-			if (want != null && !same(want, pet)) warnSoft(pet.isEmpty() ? "Which pet is out? (open /pets once)" : "Wrong pet for this: " + pet, "plan needs " + want);
+		long tnow = System.currentTimeMillis();
+		for (Rule r : rules) {
+			if (r.chat == null || !r.chat.matcher(line).find()) continue;
+			r.seenAt = tnow;
+			// e.g. the pending-Bestiary line on join: say once (then at most every 30 min) whether the right pet is out
+			if (paused() || tnow - r.nagAt < 30 * 60_000L || same(r.pet, pet)) continue;
+			if (XP.matcher(line).find()) continue;            // XP lines are the XP watch's job
+			r.nagAt = tnow;
+			warnSoft(pet.isEmpty() ? "Which pet is out? (open /pets once)" : r.pet + " for this, not " + pet, Herald.clean(r.title.isEmpty() ? "plan needs " + r.pet : r.title));
 		}
 		xpLine(line);
 	}
