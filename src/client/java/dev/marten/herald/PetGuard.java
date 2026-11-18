@@ -67,6 +67,7 @@ final class PetGuard {
 	private long lastStop = 0, lastSoft = 0, lastOpenWarn = 0;
 	private String lastMismatch = "";
 	private Field hovered; private boolean hoveredTried = false;
+	private Screen openScreen;                // the menu that's open now (from Fabric screen events)
 
 	PetGuard(Herald h) { this.h = h; }
 
@@ -194,7 +195,7 @@ final class PetGuard {
 			}
 		} catch (Exception e) { Herald.LOG.debug("pet tab: {}", e.toString()); }
 		try {
-			if (mc.screen instanceof AbstractContainerScreen<?> cs && cs.getTitle().getString().startsWith("Pets")) {
+			if (openScreen instanceof AbstractContainerScreen<?> cs && cs.getTitle().getString().startsWith("Pets")) {
 				for (Slot sl : cs.getMenu().slots) {
 					ItemStack st = sl.getItem();
 					if (st.isEmpty()) continue;
@@ -212,6 +213,7 @@ final class PetGuard {
 
 	/** A guarded menu just opened: warn before he clicks anything. */
 	void onOpen(Screen screen) {
+		openScreen = screen;
 		if (paused() || !(screen instanceof AbstractContainerScreen<?>)) return;
 		String title = Guide.plain(screen.getTitle().getString());
 		String want = null;
@@ -268,7 +270,7 @@ final class PetGuard {
 		}
 	}
 
-	void onClose(Screen s) { if (s == okScreen) okScreen = null; if (s == armScreen) armScreen = null; }
+	void onClose(Screen s) { if (s == openScreen) openScreen = null; if (s == okScreen) okScreen = null; if (s == armScreen) armScreen = null; }
 
 	/** Backup: XP already landed on the wrong pet → loud STOP (works even if the click guard missed the item). */
 	private void xpLine(String line) {
